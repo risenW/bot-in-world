@@ -37,7 +37,7 @@ export function encodeCheckpoint(policy: Policy, meta: Omit<CheckpointMeta, 'for
 
 export function decodeCheckpoint(buf: ArrayBuffer): { meta: CheckpointMeta; weights: Float32Array } {
   const view = new DataView(buf);
-  if (view.getUint32(0, true) !== MAGIC) throw new Error('Not a PufferBot checkpoint (.pfbt)');
+  if (view.getUint32(0, true) !== MAGIC) throw new Error('Not a SpAItial Bot checkpoint (.pfbt)');
   const jsonLen = view.getUint32(8, true);
   const jsonPadded = (jsonLen + 3) & ~3;
   const meta = JSON.parse(new TextDecoder().decode(new Uint8Array(buf, 12, jsonLen))) as CheckpointMeta;

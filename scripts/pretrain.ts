@@ -21,9 +21,13 @@ function arg(name: string, def: string): string {
 const level = arg('level', 'warehouse');
 const totalSteps = parseInt(arg('steps', '3000000'), 10);
 const seed = parseInt(arg('seed', '42'), 10);
-const out = arg('out', resolve(root, 'public/checkpoints/pretrained.pfbt'));
+const taskMode = arg('task', 'nav') as 'nav' | 'fetch';
+const numBalls = parseInt(arg('balls', '4'), 10);
+const climb = parseFloat(arg('climb', '0.5'));
+const out = arg('out', resolve(root, `public/checkpoints/${taskMode === 'fetch' ? 'pretrained-fetch.pfbt' : 'pretrained.pfbt'}`));
+const task = { mode: taskMode, numBalls, numDistractors: 3 };
 
-console.log(`[pretrain] level=${level} steps=${totalSteps} seed=${seed}`);
+console.log(`[pretrain] level=${level} task=${taskMode}${taskMode === 'fetch' ? ` balls=${numBalls}` : ''} steps=${totalSteps} seed=${seed}`);
 const meshPath = resolve(root, `public/levels/${level}/mesh_simplified.ply`);
 const mesh = parsePly(readFileSync(meshPath).buffer as ArrayBuffer);
 console.log(`[pretrain] mesh: ${mesh.positions.length / 3} verts, ${mesh.indices.length / 3} tris`);
@@ -35,14 +39,14 @@ const splat = existsSync(splatPath)
 if (!splat) console.warn('[pretrain] no world.ply — spawn filter disabled');
 
 const t0 = Date.now();
-const grid = bakeNavGrid(mesh, splat);
+const grid = bakeNavGrid(mesh, splat, { climbHeight: climb });
 console.log(`[pretrain] navgrid: ${grid.w}x${grid.h} cells, ${grid.spawn.length} walkable (${((Date.now() - t0) / 1000).toFixed(1)}s)`);
 if (grid.spawn.length < 200) {
   console.error('[pretrain] walkable area too small — check the level');
   process.exit(1);
 }
 
-const trainer = new VecTrainer(grid, seed);
+const trainer = new VecTrainer(grid, seed, {}, task);
 const start = Date.now();
 let lastLog = 0;
 while (trainer.globalStep < totalSteps) {
@@ -56,7 +60,7 @@ while (trainer.globalStep < totalSteps) {
       `[pretrain] step=${(s.globalStep / 1e6).toFixed(2)}M ` +
       `sps=${Math.round(s.globalStep / elapsed)} ` +
       `return=${s.meanReturn.toFixed(2)} success=${(s.successRate * 100).toFixed(0)}% ` +
-      `epLen=${s.meanEpLen.toFixed(0)} goalDist<=${s.curriculum.toFixed(1)}m ` +
+      `epLen=${s.meanEpLen.toFixed(0)} curriculum=${s.curriculum.toFixed(1)}${taskMode === 'fetch' ? ' balls' : 'm'} ` +
       `kl=${s.losses.approxKl.toFixed(4)} ent=${s.losses.entropy.toFixed(3)}`,
     );
   }
@@ -67,7 +71,7 @@ const buf = encodeCheckpoint(trainer.policy, {
   trainedSteps: trainer.globalStep,
   world: level,
   created: new Date().toISOString(),
-  notes: `pretrained headless in Node, seed=${seed}`,
+  notes: `pretrained headless in Node, task=${taskMode}, seed=${seed}`,
 });
 writeFileSync(out, Buffer.from(buf));
 console.log(`[pretrain] saved ${out} (${(buf.byteLength / 1024).toFixed(0)} KB) ` +

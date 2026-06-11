@@ -1,90 +1,237 @@
 import { defineConfig, type Plugin } from 'vite';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { existsSync, mkdirSync, createReadStream, statSync, writeFileSync, readFileSync } from 'node:fs';
+import { writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { execFile } from 'node:child_process';
 import { Readable } from 'node:stream';
 
-// Serves arbitrary PUBLIC Spaitial worlds to the app:
-//   GET /ext/spaitial/:uuid/meta       -> proxied signed-urls JSON (their API has no CORS for us)
-//   GET /ext/spaitial/:uuid/world.ply  -> downloads the .spz, converts via splat-transform, caches on disk
-// First conversion takes a minute or two; afterwards it's served straight from tmp/custom-worlds/.
+// Server-side companion for the app (dev + preview):
+//
+// BYOK world creation (the main path — full splat + collision mesh):
+//   POST /ext/create-world                    body {prompt?|imageBase64?, title?}, header x-spaitial-key
+//   GET  /ext/created/:reqId/status           {phase: generating|downloading|mesh-export|converting|ready|error}
+//   GET  /ext/created/:reqId/world.ply        converted splat
+//   GET  /ext/created/:reqId/mesh_simplified.ply
+//
+// Public-link worlds (splat only, no mesh export available):
+//   GET  /ext/spaitial/:uuid/meta             proxied signed-urls JSON
+//   GET  /ext/spaitial/:uuid/world.ply        downloaded + converted, disk-cached
+//
+// The user's API key is held in memory for the lifetime of a creation job and
+// never written to disk or logged.
 
+const API = 'https://api.spaitial.ai';
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
-const CACHE_DIR = resolve(__dirname, 'tmp/custom-worlds');
+const REQ_RE = /^req_[0-9a-f]{32}$/;
+const PUBLIC_CACHE = resolve(__dirname, 'tmp/custom-worlds');
+const CREATED_CACHE = resolve(__dirname, 'tmp/created-worlds');
+const NO_PEOPLE = ' No people, no humans, no characters, no crowds, no portraits, no mannequins, no animals, no visible body parts.';
+
 const inflight = new Map<string, Promise<string>>();
 
-async function preparePly(uuid: string): Promise<string> {
-  const dir = resolve(CACHE_DIR, uuid);
-  const ply = resolve(dir, 'world.ply');
-  if (existsSync(ply)) return ply;
-  if (inflight.has(uuid)) return inflight.get(uuid)!;
+interface CreateJob { phase: string; detail?: string; error?: string; title?: string }
+const jobs = new Map<string, CreateJob>();
 
-  const job = (async () => {
-    mkdirSync(dir, { recursive: true });
-    const metaRes = await fetch(`https://api.spaitial.ai/worlds/public/${uuid}/signed-urls`);
-    if (!metaRes.ok) throw new Error(`signed-urls ${metaRes.status} — is the world public?`);
-    const meta = (await metaRes.json()) as { splat_url?: string };
-    if (!meta.splat_url) throw new Error('world has no splat_url');
-    writeFileSync(resolve(dir, 'meta.json'), JSON.stringify(meta, null, 2));
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
+function convertSpz(spz: string, ply: string): Promise<void> {
+  return new Promise((res, rej) => {
+    execFile('npx', ['splat-transform', '-w', spz, ply], { cwd: __dirname, timeout: 10 * 60 * 1000 },
+      (err, _out, stderr) => (err ? rej(new Error(`splat-transform failed: ${stderr?.slice(-400)}`)) : res()));
+  });
+}
+
+async function downloadTo(url: string, headers: Record<string, string>, dest: string): Promise<void> {
+  const r = await fetch(url, { headers });
+  if (!r.ok || !r.body) throw new Error(`download ${r.status}`);
+  await writeFile(dest, Readable.fromWeb(r.body as never));
+}
+
+async function readBody(req: IncomingMessage, limit = 40 * 1024 * 1024): Promise<string> {
+  const chunks: Buffer[] = [];
+  let size = 0;
+  for await (const chunk of req) {
+    size += (chunk as Buffer).length;
+    if (size > limit) throw new Error('body too large');
+    chunks.push(chunk as Buffer);
+  }
+  return Buffer.concat(chunks).toString('utf8');
+}
+
+function json(res: ServerResponse, status: number, data: unknown): void {
+  res.statusCode = status;
+  res.setHeader('content-type', 'application/json');
+  res.end(JSON.stringify(data));
+}
+
+function serveFile(res: ServerResponse, path: string): void {
+  if (!existsSync(path)) { res.statusCode = 404; res.end('not ready'); return; }
+  res.setHeader('content-type', 'application/octet-stream');
+  res.setHeader('content-length', String(statSync(path).size));
+  createReadStream(path).pipe(res);
+}
+
+// ---------------- BYOK creation ----------------
+
+async function runCreateJob(reqId: string, key: string): Promise<void> {
+  const job = jobs.get(reqId)!;
+  const dir = resolve(CREATED_CACHE, reqId);
+  mkdirSync(dir, { recursive: true });
+  const auth = { Authorization: `Bearer ${key}` };
+  try {
+    job.phase = 'generating';
+    for (;;) {
+      const st = (await (await fetch(`${API}/v1/worlds/requests/${reqId}/status`, { headers: auth })).json()) as { status: string; progress?: number };
+      if (st.status === 'COMPLETED') break;
+      if (st.status === 'FAILED' || st.status === 'CANCELLED') throw new Error(`generation ${st.status}`);
+      job.detail = st.progress != null ? `${Math.round(st.progress * 100)}%` : undefined;
+      await sleep(8000);
+    }
+    try {
+      const env = (await (await fetch(`${API}/v1/worlds/requests/${reqId}`, { headers: auth })).json()) as { world?: { title?: string } };
+      if (env.world?.title) job.title = env.world.title;
+    } catch { /* title is cosmetic */ }
+
+    job.phase = 'downloading';
+    job.detail = undefined;
     const spz = resolve(dir, 'world.spz');
-    if (!existsSync(spz)) {
-      const dl = await fetch(meta.splat_url);
-      if (!dl.ok || !dl.body) throw new Error(`splat download ${dl.status}`);
-      const { writeFile } = await import('node:fs/promises');
-      await writeFile(spz, Readable.fromWeb(dl.body as never));
+    if (!existsSync(spz)) await downloadTo(`${API}/v1/worlds/requests/${reqId}/splat`, auth, spz);
+
+    job.phase = 'mesh-export';
+    await fetch(`${API}/v1/worlds/requests/${reqId}/exports/mesh-simplified`, { method: 'POST', headers: auth });
+    for (;;) {
+      const ex = (await (await fetch(`${API}/v1/worlds/requests/${reqId}/exports/mesh-simplified`, { headers: auth })).json()) as { status: string; download_url?: string };
+      if (ex.status === 'READY' && ex.download_url) {
+        await downloadTo(ex.download_url, auth, resolve(dir, 'mesh_simplified.ply'));
+        break;
+      }
+      if (ex.status === 'FAILED') throw new Error('mesh export failed');
+      await sleep(8000);
     }
 
-    await new Promise<void>((res, rej) => {
-      execFile('npx', ['splat-transform', '-w', spz, ply], { cwd: __dirname, timeout: 10 * 60 * 1000 },
-        (err, _out, stderr) => (err ? rej(new Error(`splat-transform failed: ${stderr?.slice(-400)}`)) : res()));
-    });
-    return ply;
-  })();
-  inflight.set(uuid, job);
-  try {
-    return await job;
-  } finally {
-    inflight.delete(uuid);
+    job.phase = 'converting';
+    await convertSpz(spz, resolve(dir, 'world.ply'));
+    writeFileSync(resolve(dir, 'meta.json'), JSON.stringify({ request_id: reqId, title: job.title ?? null }, null, 2));
+    job.phase = 'ready';
+  } catch (e) {
+    job.phase = 'error';
+    job.error = (e as Error).message;
   }
 }
 
+function createdStatus(reqId: string): CreateJob | null {
+  const job = jobs.get(reqId);
+  if (job) return job;
+  const dir = resolve(CREATED_CACHE, reqId);
+  if (existsSync(resolve(dir, 'world.ply')) && existsSync(resolve(dir, 'mesh_simplified.ply'))) {
+    let title: string | undefined;
+    try { title = JSON.parse(readFileSync(resolve(dir, 'meta.json'), 'utf8')).title ?? undefined; } catch { /* ok */ }
+    return { phase: 'ready', title };
+  }
+  return null;
+}
+
+// ---------------- public-link worlds (splat only) ----------------
+
+async function preparePublicPly(uuid: string): Promise<string> {
+  const dir = resolve(PUBLIC_CACHE, uuid);
+  const ply = resolve(dir, 'world.ply');
+  if (existsSync(ply)) return ply;
+  if (inflight.has(uuid)) return inflight.get(uuid)!;
+  const work = (async () => {
+    mkdirSync(dir, { recursive: true });
+    const metaRes = await fetch(`${API}/worlds/public/${uuid}/signed-urls`);
+    if (!metaRes.ok) throw new Error(`signed-urls ${metaRes.status} — is the world public?`);
+    const meta = (await metaRes.json()) as { splat_url?: string };
+    if (!meta.splat_url) throw new Error('world has no splat_url');
+    const spz = resolve(dir, 'world.spz');
+    if (!existsSync(spz)) await downloadTo(meta.splat_url, {}, spz);
+    await convertSpz(spz, ply);
+    return ply;
+  })();
+  inflight.set(uuid, work);
+  try { return await work; } finally { inflight.delete(uuid); }
+}
+
+// ---------------- middleware ----------------
+
 function handler() {
   return async (req: IncomingMessage, res: ServerResponse, next: () => void) => {
-    const m = req.url?.match(/^\/ext\/spaitial\/([0-9a-f-]{36})\/(meta|world\.ply)$/);
-    if (!m) return next();
-    const [, uuid, what] = m;
-    if (!UUID_RE.test(uuid)) { res.statusCode = 400; res.end('bad uuid'); return; }
+    const url = req.url ?? '';
     try {
-      if (what === 'meta') {
-        const r = await fetch(`https://api.spaitial.ai/worlds/public/${uuid}/signed-urls`);
-        res.statusCode = r.status;
-        res.setHeader('content-type', 'application/json');
-        res.end(await r.text());
+      if (url === '/ext/create-world' && req.method === 'POST') {
+        const key = (req.headers['x-spaitial-key'] as string | undefined)?.trim();
+        if (!key || !key.startsWith('spt_')) { json(res, 401, { error: 'missing or invalid x-spaitial-key' }); return; }
+        const body = JSON.parse(await readBody(req)) as { prompt?: string; imageBase64?: string; title?: string };
+        let input: Record<string, unknown>;
+        if (body.prompt?.trim()) input = { type: 'text', prompt: body.prompt.trim() + NO_PEOPLE };
+        else if (body.imageBase64) input = { type: 'base64', image_base64: body.imageBase64 };
+        else { json(res, 400, { error: 'provide a prompt or an image' }); return; }
+
+        const submit = await fetch(`${API}/v1/worlds`, {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            input,
+            title: body.title || undefined,
+            validation: { skip: true },
+            visibility: { is_public: false, is_listed: false },
+          }),
+        });
+        const submitText = await submit.text();
+        if (!submit.ok) { res.statusCode = submit.status; res.setHeader('content-type', 'application/json'); res.end(submitText); return; }
+        const { request_id } = JSON.parse(submitText) as { request_id: string };
+        jobs.set(request_id, { phase: 'generating', title: body.title });
+        void runCreateJob(request_id, key);
+        json(res, 202, { request_id });
         return;
       }
-      const ply = await preparePly(uuid);
-      const size = statSync(ply).size;
-      res.setHeader('content-type', 'application/octet-stream');
-      res.setHeader('content-length', String(size));
-      createReadStream(ply).pipe(res);
+
+      const created = url.match(/^\/ext\/created\/(req_[0-9a-f]{32})\/(status|world\.ply|mesh_simplified\.ply)$/);
+      if (created) {
+        const [, reqId, what] = created;
+        if (!REQ_RE.test(reqId)) { res.statusCode = 400; res.end('bad id'); return; }
+        if (what === 'status') {
+          const st = createdStatus(reqId);
+          if (!st) json(res, 404, { error: 'unknown world' });
+          else json(res, 200, st);
+        } else {
+          serveFile(res, resolve(CREATED_CACHE, reqId, what));
+        }
+        return;
+      }
+
+      const pub = url.match(/^\/ext\/spaitial\/([0-9a-f-]{36})\/(meta|world\.ply)$/);
+      if (pub) {
+        const [, uuid, what] = pub;
+        if (!UUID_RE.test(uuid)) { res.statusCode = 400; res.end('bad uuid'); return; }
+        if (what === 'meta') {
+          const r = await fetch(`${API}/worlds/public/${uuid}/signed-urls`);
+          res.statusCode = r.status;
+          res.setHeader('content-type', 'application/json');
+          res.end(await r.text());
+        } else {
+          serveFile(res, await preparePublicPly(uuid));
+        }
+        return;
+      }
     } catch (e) {
-      res.statusCode = 502;
-      res.setHeader('content-type', 'application/json');
-      res.end(JSON.stringify({ error: (e as Error).message }));
+      json(res, 502, { error: (e as Error).message });
+      return;
     }
+    next();
   };
 }
 
-function spaitialProxy(): Plugin {
+function spaitialPlugin(): Plugin {
   return {
-    name: 'spaitial-public-worlds',
+    name: 'spaitial-worlds',
     configureServer(server) { server.middlewares.use(handler()); },
     configurePreviewServer(server) { server.middlewares.use(handler()); },
   };
 }
 
 export default defineConfig({
-  plugins: [spaitialProxy()],
+  plugins: [spaitialPlugin()],
 });

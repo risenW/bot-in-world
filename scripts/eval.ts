@@ -19,7 +19,9 @@ function arg(name: string, def: string): string {
 }
 
 const level = arg('level', 'gallery');
-const ckptPath = arg('ckpt', resolve(root, 'public/checkpoints/pretrained.pfbt'));
+const taskMode = arg('task', 'nav') as 'nav' | 'fetch';
+const numBalls = parseInt(arg('balls', '4'), 10);
+const ckptPath = arg('ckpt', resolve(root, `public/checkpoints/${taskMode === 'fetch' ? 'pretrained-fetch.pfbt' : 'pretrained.pfbt'}`));
 const episodes = parseInt(arg('episodes', '200'), 10);
 const seed = parseInt(arg('seed', '7'), 10);
 
@@ -28,12 +30,12 @@ const splatPath = resolve(root, `public/levels/${level}/world.ply`);
 const splat = existsSync(splatPath)
   ? parsePly(readFileSync(splatPath).buffer as ArrayBuffer, { transform: false }).positions
   : undefined;
-const grid = bakeNavGrid(mesh, splat);
+const grid = bakeNavGrid(mesh, splat, { climbHeight: parseFloat(arg('climb', '0.5')) });
 const { policy, meta } = policyFromCheckpoint(readFileSync(ckptPath).buffer as ArrayBuffer);
 console.log(`[eval] checkpoint: trained ${(meta.trainedSteps / 1e6).toFixed(1)}M steps on "${meta.world}" — evaluating on "${level}"`);
 
 const rng = mulberry32(seed);
-const env = new NavEnv(grid, rng);
+const env = new NavEnv(grid, rng, { mode: taskMode, numBalls, numDistractors: 3 });
 env.goalDistMin = 2;
 env.goalDistMax = 10;
 const acts = makeActivations(policy, 1);
@@ -54,5 +56,6 @@ for (let ep = 0; ep < episodes; ep++) {
     }
   }
 }
-console.log(`[eval] ${level}: success ${successes}/${episodes} (${((100 * successes) / episodes).toFixed(1)}%), ` +
+console.log(`[eval] ${level} (${taskMode}${taskMode === 'fetch' ? ` x${numBalls} balls` : ''}): ` +
+  `success ${successes}/${episodes} (${((100 * successes) / episodes).toFixed(1)}%), ` +
   `avg episode ${(totalLen / episodes).toFixed(0)} steps, avg goal dist ${(totalDist / episodes).toFixed(1)}m`);

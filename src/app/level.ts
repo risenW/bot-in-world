@@ -26,6 +26,8 @@ export class Level {
 
   splatEntity: pc.Entity | null = null;
   private splatAsset: pc.Asset | null = null;
+  private splatPts: Float32Array | null = null;
+  climbHeight = 0.5;   // max climbable step; rebake() applies changes
   debugMesh: pc.Entity | null = null;
   navDebug: pc.Entity | null = null;
   mode: ViewMode = 'both';
@@ -36,11 +38,13 @@ export class Level {
     this.world = world;
   }
 
-  // levelId is either a bundled level ("warehouse") or "custom:<world-uuid>"
-  // for a world loaded from a public app.spaitial.ai link.
+  // levelId: a bundled level ("warehouse"), "created:<request_id>" for a world
+  // generated through the BYOK dialog (full splat + mesh pipeline), or
+  // "custom:<world-uuid>" for a public link (splat only, no mesh).
   async load(levelId: string, onProgress: (step: string, frac: number) => void): Promise<void> {
     this.unload();
     const customUuid = levelId.startsWith('custom:') ? levelId.slice(7) : null;
+    const createdId = levelId.startsWith('created:') ? levelId.slice(8) : null;
 
     if (customUuid) {
       this.manifest = {
@@ -55,6 +59,7 @@ export class Level {
 
       const points = this.splatPositions();
       if (!points) throw new Error('could not read gaussian data from the loaded splat');
+      this.splatPts = points;
       onProgress('Baking navigation grid from splat…', 0.6);
       await microtask();
       // no mesh export for public worlds: navgrid from the splat itself,
@@ -67,12 +72,28 @@ export class Level {
         aabb: { min: [this.grid.minX, this.grid.meshMinY, this.grid.minZ], max: [this.grid.minX + this.grid.w * this.grid.cell, this.grid.meshMinY + 10, this.grid.minZ + this.grid.h * this.grid.cell] },
       };
     } else {
-      onProgress('Loading manifest…', 0.05);
-      const manifest = (await (await fetch(`/levels/${levelId}/manifest.json`)).json()) as LevelManifest;
-      this.manifest = manifest;
+      if (createdId) {
+        let name = `Created ${createdId.slice(4, 10)}`;
+        try {
+          const st = await (await fetch(`/ext/created/${createdId}/status`)).json();
+          if (st.title) name = st.title;
+        } catch { /* name fallback is fine */ }
+        this.manifest = {
+          id: levelId,
+          name,
+          description: 'Generated with your Spaitial API key',
+          splats: [{ url: `/ext/created/${createdId}/world.ply` }],
+          collision: [{ url: `/ext/created/${createdId}/mesh_simplified.ply` }],
+        };
+      } else {
+        onProgress('Loading manifest…', 0.05);
+        this.manifest = (await (await fetch(`/levels/${levelId}/manifest.json`)).json()) as LevelManifest;
+      }
+      const manifest = this.manifest;
 
       onProgress('Loading gaussian splat…', 0.1);
       await this.loadSplat(manifest.splats[0].url);
+      this.splatPts = this.splatPositions();
 
       onProgress('Downloading collision mesh…', 0.45);
       const meshBuf = await (await fetch(manifest.collision[0].url)).arrayBuffer();
@@ -81,7 +102,7 @@ export class Level {
 
       onProgress('Baking navigation grid…', 0.7);
       await microtask();
-      this.grid = bakeNavGrid(this.mesh, this.splatPositions() ?? undefined);
+      this.grid = bakeNavGrid(this.mesh, this.splatPts ?? undefined, { climbHeight: this.climbHeight });
     }
     if (this.grid.spawn.length < 50) {
       console.warn(`navgrid: only ${this.grid.spawn.length} walkable cells — world may be hard to navigate`);
@@ -101,8 +122,20 @@ export class Level {
     onProgress('Ready', 1);
   }
 
+  // re-bake the navgrid with a new climb height (mesh-based levels only)
+  rebake(climbHeight: number): void {
+    this.climbHeight = climbHeight;
+    if (this.manifest.collision.length > 0) {
+      this.grid = bakeNavGrid(this.mesh, this.splatPts ?? undefined, { climbHeight });
+      this.navDebug?.destroy();
+      this.buildNavDebug();
+      if (this.navDebug) (this.navDebug as pc.Entity).enabled = this.navVisible;
+    }
+  }
+
   unload(): void {
     this.splatEntity?.destroy(); this.splatEntity = null;
+    this.splatPts = null;
     if (this.splatAsset) {
       this.app.assets.remove(this.splatAsset);
       this.splatAsset.unload();

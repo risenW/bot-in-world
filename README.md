@@ -1,15 +1,19 @@
-# 🐡 PufferBot — watch a bot learn to walk through AI-generated worlds, live in your browser
+# 🤖 SpAItial Bot — watch a bot learn to walk through AI-generated worlds, live in your browser
 
-A humanoid bot teaches itself to navigate **3D worlds generated from a text prompt** ([Spaitial](https://spaitial.ai) Gaussian splats), trained with a TypeScript port of **[PufferLib](https://puffer.ai)'s PPO** — running **100% client-side** in a web worker at thousands of steps per second. No server, no GPU farm: open the page, press *Start learning*, and watch it figure out the world in minutes.
+A humanoid bot teaches itself to navigate **3D worlds generated from a text prompt or a photo** with the [Spaitial API](https://developers.spaitial.ai) (gaussian splat + reconstructed collision mesh), trained with a TypeScript port of **[PufferLib](https://puffer.ai)'s PPO** — running **100% client-side** in a web worker at thousands of steps per second. No server, no GPU farm: open the page, press *Start learning*, and watch it figure out the world in minutes.
+
+Bring your own Spaitial API key, type a prompt (or drop in a photo), and a few minutes later the bot is learning to walk, climb, and fetch in *your* world.
 
 Because the policy only ever sees **egocentric observations** (a 16-ray lidar, the goal bearing in its own body frame, its own speed), it learns *navigation*, not *a map*. Swap in a world it has never seen and it keeps walking.
 
-**Trained 3M steps on the warehouse only:**
+**Trained on the warehouse only, evaluated greedy:**
 
-| World | Success rate (greedy, 200 episodes) | Avg episode |
-| --- | --- | --- |
-| Obstacle Warehouse (training world) | 99.5 % | 47 steps |
-| Gallery (**never seen during training**) | **100 %** | 44 steps |
+| Task | World | Success rate | Avg episode |
+| --- | --- | --- | --- |
+| Navigate (3M steps) | Obstacle Warehouse (training world) | 97.0 % | 60 steps |
+| Navigate | Gallery (**never seen during training**) | **100 %** | 44 steps |
+| Fetch 4 balls (8M steps) | Obstacle Warehouse (training world) | 96.0 % | 458 steps |
+| Fetch 4 balls | Gallery (**never seen**) | **99.0 %** | 469 steps |
 
 ## Run it
 
@@ -27,8 +31,10 @@ In the app:
 - **💾 Save / 📂 Load** — checkpoints as `.pfbt` files (puffernet-style flat float32 weights + JSON header). Training also autosaves to localStorage every 15 s.
 - **Click anywhere on the floor** to send the bot there.
 - **World selector** — swap to the unseen gallery mid-session. Weights carry over; training pauses so you can evaluate first.
-- **Load ANY public Spaitial world** — paste a link like `https://app.spaitial.ai/worlds/<id>` into the World panel. The dev server fetches the world's splat, converts it, and the navgrid is baked **from the gaussians alone** (public worlds have no mesh export): floor = the lowest dense band of points per column, obstacles = points at body height. A synthetic ground trimesh keeps click-to-goal and physics working. First load takes a minute; it's cached in `tmp/custom-worlds/` afterwards.
+- **✨ Create your own world (BYOK)** — open the dialog, paste your [Spaitial API key](https://developers.spaitial.ai), and describe a world (or upload a photo). The local server submits the generation, polls it, downloads the splat **and the reconstructed collision mesh**, converts everything, and drops the bot in — full physics, climbing, and training support. Your key stays in memory on your machine and is never written to disk.
+- **Climbing** — the bot hops up onto low platforms, crates, and steps like a tiny parkour humanoid. Set the max climb height (off / 0.35 / 0.5 / 0.7 m) in the Bot panel; the navgrid re-bakes climbable tops on the fly (low flat surfaces get promoted to walkable ground, crate rims are bridged as climb seams).
 - **Set the goal yourself** — click anywhere on the floor, or hit **🎲 New goal** for a random one.
+- **Two tasks** — 🧭 *Navigate* (walk to the goal) and 🔵 *Fetch balls*: a configurable number of blue balls are scattered through the world; the bot must find each one, pick it up by touching it, and carry it back to the green goal ring — fast, without hitting obstacles. Other-colored balls are decoys it never senses. Training auto-curriculums from 1 ball up to your setting. The two tasks share one network (32-dim egocentric obs), so navigation skill transfers into fetch training.
 - View toggles: splat / collision wireframe / navgrid (<kbd>B</kbd> <kbd>M</kbd> <kbd>P</kbd> <kbd>O</kbd> <kbd>N</kbd>), camera collision <kbd>C</kbd>, follow cam <kbd>F</kbd>, greedy policy <kbd>G</kbd>, respawn <kbd>R</kbd>, train toggle <kbd>Space</kbd>, physics balls <kbd>1</kbd>–<kbd>5</kbd>.
 
 ## Generate your own worlds
@@ -80,10 +86,12 @@ Checkpoints are **puffernet-compatible flat weights** (all layers flattened and 
 ### Scripts
 
 ```bash
-npm run pretrain -- --level warehouse --steps 3000000   # headless training → pretrained.pfbt
-npx tsx scripts/eval.ts --level gallery --episodes 200  # generalization eval
-npm run bake -- --level warehouse                       # navgrid stats / manifest bounds
-./scripts/fetch-world.sh <req_id> <level-id>            # download Spaitial artifacts
+npm run pretrain -- --level warehouse --steps 3000000        # nav → pretrained.pfbt
+npm run pretrain -- --task fetch --balls 4 --steps 8000000   # fetch → pretrained-fetch.pfbt
+npx tsx scripts/eval.ts --level gallery --episodes 200       # generalization eval
+npx tsx scripts/eval.ts --level gallery --task fetch         # fetch eval on unseen world
+npm run bake -- --level warehouse                            # navgrid stats / manifest bounds
+./scripts/fetch-world.sh <req_id> <level-id>                 # download Spaitial artifacts
 ```
 
 ## Credits

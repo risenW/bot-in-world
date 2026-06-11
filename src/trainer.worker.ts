@@ -2,6 +2,7 @@
 
 import { fromTransfer, NavGridTransfer } from './sim/navgrid';
 import { VecTrainer, TrainStats } from './sim/vectrain';
+import { TaskConfig, DEFAULT_TASK } from './sim/env';
 
 export interface WorkerInMsg {
   type: 'init' | 'start' | 'pause' | 'loadWeights' | 'reset';
@@ -9,6 +10,7 @@ export interface WorkerInMsg {
   seed?: number;
   weights?: Float32Array;
   trainedSteps?: number;
+  task?: TaskConfig;
 }
 
 export interface WorkerOutMsg {
@@ -45,7 +47,7 @@ self.onmessage = (ev: MessageEvent<WorkerInMsg>) => {
   const msg = ev.data;
   switch (msg.type) {
     case 'init': {
-      trainer = new VecTrainer(fromTransfer(msg.grid!), msg.seed ?? 42);
+      trainer = new VecTrainer(fromTransfer(msg.grid!), msg.seed ?? 42, {}, msg.task ?? DEFAULT_TASK);
       running = false;
       baseSteps = 0;
       post({ type: 'ready' });

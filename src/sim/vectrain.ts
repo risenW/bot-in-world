@@ -2,7 +2,7 @@
 // Runs identically in a web worker (live training UI) and Node (pretraining).
 
 import { NavGrid } from './navgrid';
-import { NavEnv, OBS_SIZE, N_ACTIONS, MAX_EPISODE_STEPS } from './env';
+import { NavEnv, OBS_SIZE, N_ACTIONS, TaskConfig, DEFAULT_TASK } from './env';
 import {
   Policy, PpoTrainer, PpoConfig, DEFAULT_PPO, Rollout, makeRollout,
   makeActivations, Activations, computeGae, softmaxRow, sampleCategorical, UpdateStats,
@@ -16,7 +16,7 @@ export interface TrainStats {
   meanReturn: number;     // rolling mean episodic return
   successRate: number;    // rolling
   meanEpLen: number;
-  curriculum: number;     // current max goal distance (m)
+  curriculum: number;     // nav: max goal distance (m); fetch: active ball count
   losses: UpdateStats;
   lr: number;
 }
@@ -45,14 +45,18 @@ export class VecTrainer {
   private recent: { ret: number; len: number; success: boolean }[] = [];
   curriculumMax = CURRICULUM_MIN;
 
-  constructor(grid: NavGrid, seed = 42, cfgOverride: Partial<PpoConfig> = {}) {
+  task: TaskConfig;
+  ballCurriculum = 1;
+
+  constructor(grid: NavGrid, seed = 42, cfgOverride: Partial<PpoConfig> = {}, task: TaskConfig = DEFAULT_TASK) {
     this.cfg = { ...DEFAULT_PPO, obsSize: OBS_SIZE, actions: N_ACTIONS, ...cfgOverride };
+    this.task = { ...task };
     this.rng = mulberry32(seed);
     this.policy = new Policy(OBS_SIZE, this.cfg.hidden, N_ACTIONS, this.rng);
     this.trainer = new PpoTrainer(this.policy, this.cfg, this.rng);
     this.envs = [];
     for (let e = 0; e < this.cfg.numEnvs; e++) {
-      const env = new NavEnv(grid, mulberry32(seed * 7919 + e));
+      const env = new NavEnv(grid, mulberry32(seed * 7919 + e), this.task);
       this.applyCurriculum(env);
       env.reset();
       this.envs.push(env);
@@ -70,6 +74,9 @@ export class VecTrainer {
   private applyCurriculum(env: NavEnv): void {
     env.goalDistMin = 1.0;
     env.goalDistMax = this.curriculumMax;
+    if (this.task.mode === 'fetch') {
+      env.activeBalls = Math.max(1, Math.min(this.ballCurriculum, this.task.numBalls));
+    }
   }
 
   loadWeights(flat: Float32Array): void {
@@ -127,7 +134,19 @@ export class VecTrainer {
     const meanRet = this.meanReturn();
     const meanLen = this.meanEpLen();
     if (this.recent.length >= 100) {
-      if (sr > 0.8 && this.curriculumMax < CURRICULUM_MAX) {
+      if (this.task.mode === 'fetch') {
+        // ramp ball count first, then goal distance
+        if (sr > 0.7 && this.ballCurriculum < this.task.numBalls) {
+          this.ballCurriculum++;
+          this.recent.length = 0;
+        } else if (sr > 0.8 && this.curriculumMax < CURRICULUM_MAX) {
+          this.curriculumMax += CURRICULUM_STEP;
+          this.recent.length = 0;
+        } else if (sr < 0.1 && this.ballCurriculum > 1) {
+          this.ballCurriculum--;
+          this.recent.length = 0;
+        }
+      } else if (sr > 0.8 && this.curriculumMax < CURRICULUM_MAX) {
         this.curriculumMax += CURRICULUM_STEP;
         this.recent.length = 0;
       } else if (sr < 0.15 && this.curriculumMax > CURRICULUM_MIN) {
@@ -144,7 +163,7 @@ export class VecTrainer {
       meanReturn: meanRet,
       successRate: sr,
       meanEpLen: meanLen,
-      curriculum: this.curriculumMax,
+      curriculum: this.task.mode === 'fetch' ? this.ballCurriculum : this.curriculumMax,
       losses,
       lr,
     };

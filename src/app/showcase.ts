@@ -2,11 +2,32 @@
 // weights — this is the bot you watch while (or after) training.
 
 import * as pc from 'playcanvas';
-import { NavEnv, OBS_SIZE, N_ACTIONS, DT } from '../sim/env';
+import { NavEnv, OBS_SIZE, N_ACTIONS, DT, TaskConfig, DEFAULT_TASK } from '../sim/env';
 import { NavGrid, groundHeight, isWalkable, castRay } from '../sim/navgrid';
 import { Policy, makeActivations, Activations, softmaxRow, sampleCategorical, argmaxRow } from '../sim/ppo';
 import { mulberry32, Rng } from '../sim/rng';
 import { HumanoidBot, GoalMarker } from './bot';
+
+// fetch-task ball visuals: the bot only "senses" TARGET_COLOR balls —
+// distractors are scenery it must ignore
+export const TARGET_COLOR = new pc.Color(0.31, 0.76, 0.97);   // puffer cyan
+const DISTRACTOR_COLORS = [
+  new pc.Color(0.94, 0.33, 0.31), new pc.Color(1.0, 0.93, 0.35), new pc.Color(0.67, 0.28, 0.74),
+];
+const BALL_R = 0.14;
+
+function makeBallEntity(app: pc.Application, color: pc.Color): pc.Entity {
+  const m = new pc.StandardMaterial();
+  m.diffuse = color;
+  m.emissive = new pc.Color(color.r * 0.45, color.g * 0.45, color.b * 0.45);
+  m.gloss = 0.7;
+  m.update();
+  const e = new pc.Entity('task-ball');
+  e.addComponent('render', { type: 'sphere', material: m });
+  e.setLocalScale(BALL_R * 2, BALL_R * 2, BALL_R * 2);
+  app.root.addChild(e);
+  return e;
+}
 
 export class Showcase {
   env: NavEnv;
@@ -28,27 +49,51 @@ export class Showcase {
   private sinceDone = 0;
 
   onEpisodeEnd: ((success: boolean) => void) | null = null;
+  onTaskEvent: ((event: 'pickup' | 'deposit', remaining: number) => void) | null = null;
+
+  task: TaskConfig = { ...DEFAULT_TASK };
+  private app: pc.Application;
+  private ballEntities: pc.Entity[] = [];
+  private carryBall: pc.Entity;
 
   constructor(app: pc.Application, grid: NavGrid) {
+    this.app = app;
     this.grid = grid;
     this.rng = mulberry32(Math.floor(Math.random() * 1e9));
-    this.env = new NavEnv(grid, this.rng);
-    this.env.goalDistMin = 2;
-    this.env.goalDistMax = 9;
+    this.env = this.makeEnv();
     this.policy = new Policy(OBS_SIZE, 128, N_ACTIONS, this.rng);
     this.acts = makeActivations(this.policy, 1);
     this.bot = new HumanoidBot(app);
     this.goal = new GoalMarker(app);
+    this.carryBall = makeBallEntity(app, TARGET_COLOR);
+    this.carryBall.enabled = false;
     this.respawn();
+  }
+
+  private makeEnv(): NavEnv {
+    const env = new NavEnv(this.grid, this.rng, this.task);
+    env.goalDistMin = 2;
+    env.goalDistMax = 9;
+    return env;
   }
 
   setGrid(grid: NavGrid): void {
     this.grid = grid;
-    this.env = new NavEnv(grid, this.rng);
-    this.env.goalDistMin = 2;
-    this.env.goalDistMax = 9;
+    this.env = this.makeEnv();
     this.episodes = 0; this.successes = 0;
     this.respawn();
+  }
+
+  setTask(task: TaskConfig): void {
+    this.task = { ...task };
+    const x = this.env.x, z = this.env.z, yaw = this.env.yaw;
+    this.env = this.makeEnv();
+    this.env.x = x; this.env.z = z; this.env.yaw = yaw;
+    this.env.reset(true);
+    this.episodes = 0; this.successes = 0;
+    this.bot.snapTo(this.env.x, this.env.z, this.env.yaw);
+    this.syncGoal();
+    this.syncBalls();
   }
 
   setWeights(flat: Float32Array): void {
@@ -91,10 +136,35 @@ export class Showcase {
     }
     this.bot.snapTo(this.env.x, this.env.z, this.env.yaw);
     this.syncGoal();
+    this.syncBalls();
   }
 
   private syncGoal(): void {
     this.goal.setPosition(this.env.goalX, groundHeight(this.grid, this.env.goalX, this.env.goalZ), this.env.goalZ);
+  }
+
+  // (re)build ball entities to match the env's current episode
+  private syncBalls(): void {
+    for (const e of this.ballEntities) e.destroy();
+    this.ballEntities = [];
+    const all = [
+      ...this.env.balls.map((b) => ({ b, color: TARGET_COLOR })),
+      ...this.env.distractors.map((b, i) => ({ b, color: DISTRACTOR_COLORS[i % DISTRACTOR_COLORS.length] })),
+    ];
+    for (const { b, color } of all) {
+      const e = makeBallEntity(this.app, color);
+      const gy = groundHeight(this.grid, b.x, b.z);
+      e.setPosition(b.x, (Number.isNaN(gy) ? 0 : gy) + BALL_R, b.z);
+      this.ballEntities.push(e);
+    }
+    this.refreshBallVisibility();
+  }
+
+  private refreshBallVisibility(): void {
+    for (let i = 0; i < this.env.balls.length; i++) {
+      if (this.ballEntities[i]) this.ballEntities[i].enabled = this.env.balls[i].active;
+    }
+    this.carryBall.enabled = this.env.carrying;
   }
 
   update(dt: number): void {
@@ -109,6 +179,10 @@ export class Showcase {
     const alpha = Math.min(1, this.accum / DT);
     const gy = groundHeight(this.grid, this.bot.position.x, this.bot.position.z);
     this.bot.render(alpha, Number.isNaN(gy) ? 0 : gy, dt);
+    if (this.carryBall.enabled) {
+      const p = this.bot.position;
+      this.carryBall.setPosition(p.x, p.y + 1.75 + Math.sin(performance.now() / 300) * 0.04, p.z);
+    }
   }
 
   private stepSim(): void {
@@ -124,17 +198,23 @@ export class Showcase {
     }
     const res = this.env.step(action);
     this.bot.setTarget(this.env.x, this.env.z, this.env.yaw);
+    if (this.env.climbed) this.bot.triggerJump();
+
+    if (res.pickedUp || res.deposited) {
+      this.refreshBallVisibility();
+      const remaining = this.env.balls.filter((b) => b.active).length + (this.env.carrying ? 1 : 0);
+      this.onTaskEvent?.(res.pickedUp ? 'pickup' : 'deposit', remaining);
+    }
 
     if (res.done) {
       this.episodes++;
       if (res.success) this.successes++;
       this.onEpisodeEnd?.(res.success);
-      // new goal from current position; keep walking from where we are
-      this.env.steps = 0;
-      this.env.sampleGoal();
-      this.env.prevDist = this.env.goalDist();
+      // fresh episode from where we are: new goal (and new balls in fetch mode)
+      this.env.reset(true);
       this.syncGoal();
-      this.sinceDone = res.success ? 5 : 0;
+      this.syncBalls();
+      this.sinceDone = res.success ? 8 : 0;
     }
   }
 }

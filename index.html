@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>PufferBot — RL navigation in AI-generated worlds</title>
+    <title>SpAItial Bot — RL navigation in AI-generated worlds</title>
     <style>
       :root {
         --panel-bg: rgba(13, 17, 23, 0.82);
@@ -80,6 +80,39 @@
         border-radius: 8px; padding: 6px 8px;
       }
       input.link-input::placeholder { color: var(--muted); }
+      #dialog-overlay {
+        position: fixed; inset: 0; z-index: 70; display: none;
+        align-items: center; justify-content: center;
+        background: rgba(0, 0, 0, 0.55); backdrop-filter: blur(4px);
+      }
+      #dialog-overlay.open { display: flex; }
+      .dialog {
+        width: 420px; max-width: calc(100vw - 32px); max-height: calc(100vh - 32px);
+        overflow-y: auto; border-radius: 16px; padding: 18px;
+        background: var(--panel-bg); border: 1px solid var(--panel-border);
+        backdrop-filter: blur(18px); box-shadow: 0 16px 48px rgba(0,0,0,0.6);
+      }
+      .dialog h2 { font-size: 15px; margin: 0 0 4px; }
+      .dialog .sub { font-size: 11px; color: var(--muted); margin-bottom: 12px; line-height: 1.5; }
+      .dialog label { display: block; font-size: 10px; text-transform: uppercase; letter-spacing: 1px; color: var(--muted); margin: 10px 0 4px; }
+      .dialog input[type="password"], .dialog input[type="text"], .dialog textarea {
+        font: inherit; font-size: 12px; color: var(--text); width: 100%;
+        background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.12);
+        border-radius: 8px; padding: 7px 9px; resize: vertical;
+      }
+      .dialog textarea { min-height: 64px; }
+      .dialog .progress {
+        margin-top: 12px; padding: 10px; border-radius: 10px; font-size: 12px;
+        background: rgba(79,195,247,0.08); border: 1px solid rgba(79,195,247,0.25);
+        display: none; line-height: 1.5;
+      }
+      .dialog .progress.show { display: block; }
+      .dialog .progress .spinner {
+        display: inline-block; width: 10px; height: 10px; border-radius: 50%;
+        border: 2px solid var(--accent); border-top-color: transparent;
+        animation: spin 0.9s linear infinite; margin-right: 7px; vertical-align: -1px;
+      }
+      @keyframes spin { to { transform: rotate(360deg); } }
       #toast {
         position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%) translateY(80px);
         background: var(--panel-bg); border: 1px solid var(--panel-border); border-radius: 10px;
@@ -95,11 +128,12 @@
   <body>
     <canvas id="app-canvas"></canvas>
     <div id="loading">
-      <div class="title">Puffer<span>Bot</span></div>
+      <div class="title">SpAItial <span>Bot</span></div>
       <div class="bar"><div id="loading-fill"></div></div>
       <div class="step" id="loading-step">Booting…</div>
     </div>
     <div id="panel"></div>
+    <div id="dialog-overlay"></div>
     <div id="toast"></div>
     <script type="module" src="/src/main.ts"></script>
   </body>

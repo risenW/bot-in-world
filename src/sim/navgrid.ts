@@ -15,6 +15,11 @@ export interface NavGrid {
   ground: Float32Array;    // ground Y per cell (NaN where none)
   spawn: Uint32Array;      // cell indices of the largest connected walkable region
   meshMinY: number;
+  climbHeight: number;     // max ground step the bot may climb (0 = stairs only)
+}
+
+export interface BakeOptions {
+  climbHeight?: number;    // promote low flat obstacles (crates, platforms) to walkable
 }
 
 const CELL = 0.15;          // meters per cell
@@ -30,7 +35,8 @@ const MIN_SUPPORT = 30;     // supporting splat points (3x3 neighborhood) for a 
 // spawn filter: the reconstructed mesh extends far beyond the actual world
 // (flat void planes outside the walls), but gaussians only exist where the
 // world is real. Without it, spawning falls back to the full walkable region.
-export function bakeNavGrid(mesh: ParsedMesh, splatPoints?: Float32Array): NavGrid {
+export function bakeNavGrid(mesh: ParsedMesh, splatPoints?: Float32Array, opts: BakeOptions = {}): NavGrid {
+  const climbHeight = opts.climbHeight ?? 0;
   const { positions: P, indices: I, aabb } = mesh;
   const minX = aabb.min[0] - CELL, minZ = aabb.min[2] - CELL;
   const w = Math.max(4, Math.ceil((aabb.max[0] - minX + CELL) / CELL));
@@ -118,6 +124,7 @@ export function bakeNavGrid(mesh: ParsedMesh, splatPoints?: Float32Array): NavGr
   // --- sample each cell center: vertical line vs triangles ---
   const ground = new Float32Array(nCells).fill(NaN);
   const blocked = new Uint8Array(nCells);
+  const protect = new Uint8Array(nCells); // climb cells: reduced erosion
   const hitsY: number[] = [];
   const hitsFloor: number[] = [];
   for (let cz = 0; cz < h; cz++) {
@@ -146,10 +153,57 @@ export function bakeNavGrid(mesh: ParsedMesh, splatPoints?: Float32Array): NavGr
         const dy = hitsY[i] - g;
         if (dy > CLEAR_LOW && dy < CLEAR_HIGH) { blocked[ci] = 1; break; }
       }
+
+      // climbable promotion: a blocked cell whose blocking surface is itself a
+      // low flat top (crate, platform, step) within climbHeight, with standing
+      // clearance and splat support, becomes elevated ground.
+      if (blocked[ci] && climbHeight > 0) {
+        let top = NaN;
+        for (let i = 0; i < hitsY.length; i++) {
+          const dy = hitsY[i] - g;
+          if (!hitsFloor[i] || dy <= CLEAR_LOW || dy > climbHeight) continue;
+          if (Number.isNaN(top) || hitsY[i] > top) top = hitsY[i];
+        }
+        if (!Number.isNaN(top) && support(cx, cz, top) >= MIN_SUPPORT) {
+          let clear = true;
+          for (let i = 0; i < hitsY.length; i++) {
+            const dy = hitsY[i] - top;
+            if (dy > CLEAR_LOW && dy < CLEAR_HIGH) { clear = false; break; }
+          }
+          if (clear) { ground[ci] = top; blocked[ci] = 0; protect[ci] = 1; }
+        }
+      }
     }
   }
 
-  return finalizeGrid(ground, blocked, w, h, minX, minZ, aabb.min[1]);
+  // --- climb seam bridging ---
+  // A crate/platform edge shows up as a thin ring of blocked cells (vertical
+  // side surfaces) separating the floor from the climbable top, which would
+  // disconnect the top. Bridge: a blocked cell whose opposite neighbors are
+  // walkable at two levels within climbHeight becomes walkable at the upper
+  // level. Two passes handle 2-cell-thick rims and corners.
+  if (climbHeight > 0) {
+    const okCell = (ci: number) => blocked[ci] === 0 && !Number.isNaN(ground[ci]);
+    for (let iter = 0; iter < 2; iter++) {
+      for (let cz = 1; cz < h - 1; cz++) {
+        for (let cx = 1; cx < w - 1; cx++) {
+          const ci = cz * w + cx;
+          if (okCell(ci)) continue;
+          for (const [a, b] of [[ci - 1, ci + 1], [ci - w, ci + w], [ci - w - 1, ci + w + 1], [ci - w + 1, ci + w - 1]]) {
+            if (!okCell(a) || !okCell(b)) continue;
+            const delta = Math.abs(ground[a] - ground[b]);
+            if (delta < 0.18 || delta > climbHeight) continue;
+            ground[ci] = Math.max(ground[a], ground[b]);
+            blocked[ci] = 0;
+            protect[ci] = 1;
+            break;
+          }
+        }
+      }
+    }
+  }
+
+  return finalizeGrid(ground, blocked, w, h, minX, minZ, aabb.min[1], climbHeight, protect);
 }
 
 // Bake a navgrid from gaussian splat points alone — for worlds loaded from a
@@ -229,7 +283,7 @@ export function bakeNavGridFromSplat(points: Float32Array): NavGrid {
     }
   }
 
-  return finalizeGrid(ground, blocked, w, h, minX, minZ, minY);
+  return finalizeGrid(ground, blocked, w, h, minX, minZ, minY, 0);
 }
 
 // Shared post-processing: walkability + step constraint + erosion + largest
@@ -237,8 +291,11 @@ export function bakeNavGridFromSplat(points: Float32Array): NavGrid {
 function finalizeGrid(
   ground: Float32Array, blocked: Uint8Array,
   w: number, h: number, minX: number, minZ: number, meshMinY: number,
+  climbHeight: number,
+  protect?: Uint8Array,
 ): NavGrid {
   const nCells = w * h;
+  const maxStep = Math.max(MAX_STEP, climbHeight);
 
   // --- walkability: ground + not blocked + step constraint ---
   const walk = new Uint8Array(nCells);
@@ -254,7 +311,7 @@ function finalizeGrid(
           const nx = cx + dx, nz = cz + dz;
           if (nx < 0 || nz < 0 || nx >= w || nz >= h) continue;
           const ni = nz * w + nx;
-          if (walk[ni] && Math.abs(ground[ni] - g) > MAX_STEP) bad = true;
+          if (walk[ni] && Math.abs(ground[ni] - g) > maxStep) bad = true;
         }
       }
       if (bad) walk[ci] = 0;
@@ -262,6 +319,8 @@ function finalizeGrid(
   }
 
   // --- erode by bot radius (dilate blocked) ---
+  // Climb cells (crate tops, seams) only take 1-cell erosion: full bot-radius
+  // erosion would erase every narrow climbable top.
   const erodeCells = Math.ceil(BOT_RADIUS / CELL);
   const eroded = new Uint8Array(walk);
   for (let cz = 0; cz < h; cz++) {
@@ -271,7 +330,10 @@ function finalizeGrid(
         for (let dx = -erodeCells; dx <= erodeCells; dx++) {
           if (dx * dx + dz * dz > erodeCells * erodeCells) continue;
           const nx = cx + dx, nz = cz + dz;
-          if (nx >= 0 && nz >= 0 && nx < w && nz < h) eroded[nz * w + nx] = 0;
+          if (nx < 0 || nz < 0 || nx >= w || nz >= h) continue;
+          const ni = nz * w + nx;
+          if (protect?.[ni] && dx * dx + dz * dz > 2) continue;
+          eroded[ni] = 0;
         }
       }
     }
@@ -305,7 +367,7 @@ function finalizeGrid(
   return {
     cell: CELL, minX, minZ, w, h,
     walkable: final, ground, spawn: new Uint32Array(spawnCells),
-    meshMinY,
+    meshMinY, climbHeight,
   };
 }
 
@@ -401,6 +463,7 @@ export function cellCenter(g: NavGrid, ci: number): [number, number] {
 
 export interface NavGridTransfer {
   cell: number; minX: number; minZ: number; w: number; h: number; meshMinY: number;
+  climbHeight: number;
   walkable: Uint8Array; ground: Float32Array; spawn: Uint32Array;
 }
 

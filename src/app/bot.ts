@@ -34,6 +34,9 @@ export class HumanoidBot {
   private fromX = 0; private fromZ = 0; private fromYaw = 0;
   private toX = 0; private toZ = 0; private toYaw = 0;
   private speedVis = 0;
+  private smoothY = NaN;
+  private jumpT = Infinity;       // seconds since last climb hop
+  private static JUMP_DUR = 0.4;
 
   constructor(app: pc.Application) {
     const dark = mat(new pc.Color(0.16, 0.18, 0.24));
@@ -103,6 +106,12 @@ export class HumanoidBot {
 
   snapTo(x: number, z: number, yaw: number): void {
     this.fromX = this.toX = x; this.fromZ = this.toZ = z; this.fromYaw = this.toYaw = yaw;
+    this.smoothY = NaN;
+  }
+
+  // humanoid hop when stepping up onto a climbable surface
+  triggerJump(): void {
+    this.jumpT = 0;
   }
 
   // alpha: 0..1 interpolation between previous and current sim state
@@ -119,8 +128,26 @@ export class HumanoidBot {
     const speed = dt > 0 ? dist / dt : 0;
     this.speedVis += (speed - this.speedVis) * Math.min(1, dt * 10);
 
-    this.root.setPosition(x, groundY, z);
+    // vertical smoothing + climb hop arc
+    if (Number.isNaN(this.smoothY)) this.smoothY = groundY;
+    this.smoothY += (groundY - this.smoothY) * Math.min(1, dt * 9);
+    this.jumpT += dt;
+    const jumping = this.jumpT < HumanoidBot.JUMP_DUR;
+    const jumpArc = jumping ? Math.sin((this.jumpT / HumanoidBot.JUMP_DUR) * Math.PI) * 0.22 : 0;
+
+    this.root.setPosition(x, this.smoothY + jumpArc, z);
     this.body.setEulerAngles(0, (yaw * 180) / Math.PI, 0);
+
+    if (jumping) {
+      // tuck: knees up, arms raised — a little parkour hop
+      const k = Math.sin((this.jumpT / HumanoidBot.JUMP_DUR) * Math.PI);
+      this.thighL.setLocalEulerAngles(-55 * k, 0, 0);
+      this.thighR.setLocalEulerAngles(-40 * k, 0, 0);
+      this.armL.setLocalEulerAngles(35 * k, 0, 6);
+      this.armR.setLocalEulerAngles(35 * k, 0, -6);
+      this.body.setLocalPosition(0, 0.02 * k, 0);
+      return;
+    }
 
     // walk cycle
     this.phase += this.speedVis * dt * 5.2;
