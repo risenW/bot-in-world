@@ -2,7 +2,7 @@
 
 A humanoid bot teaches itself to navigate **3D worlds generated from a text prompt or a photo** with the [Spaitial API](https://developers.spaitial.ai) (gaussian splat + reconstructed collision mesh), trained with a TypeScript port of **[PufferLib](https://puffer.ai)'s PPO**. The reinforcement learning runs **100% client-side** in a web worker at thousands of steps per second — no training server, no GPU farm. Open the page, press *Start learning*, and watch it figure out the world in minutes.
 
-> The small Vite dev server is only a thin proxy for **world generation** — it forwards Spaitial API calls (the API allowlists CORS to `app.spaitial.ai` only, so the browser can't call it directly) and converts the generated `.spz` splat to a PlayCanvas-loadable `.ply`. All RL training and inference is pure browser.
+> The small Vite dev server is only a thin proxy for **world generation** — it forwards Spaitial API calls and converts the generated `.spz` splat to a PlayCanvas-loadable `.ply`. All RL training and inference is pure browser.
 
 Bring your own Spaitial API key, type a prompt (or drop in a photo), and a few minutes later the bot is learning to walk, climb, and fetch in *your* world.
 
@@ -24,7 +24,7 @@ npm install
 npm run dev        # open the printed URL
 ```
 
-The repo ships with two pretrained checkpoints (`public/checkpoints/pretrained.pfbt` for navigate, `pretrained-fetch.pfbt` for fetch — ~85 KB each). The big level assets (`world.ply`, `world.spz`, `mesh_simplified.ply`) are not in git — generate your own worlds (below) or grab them from the project's release assets and drop them into `public/levels/<id>/`.
+The repo ships with two pretrained checkpoints (`public/checkpoints/pretrained.pfbt` for navigate, `pretrained-fetch.pfbt` for fetch — ~85 KB each). The big level assets (`world.ply`, `world.spz`, `mesh_simplified.ply`) are not in git — generate your own worlds and drop them into `public/levels/<id>/`.
 
 In the app:
 
