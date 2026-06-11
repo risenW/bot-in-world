@@ -289,8 +289,15 @@ async function boot() {
   // WASD/QE free-fly (auto-disengages follow mode), shift = faster
   const moveKeys = new Set<string>();
   const MOVE_KEYS = ['w', 'a', 's', 'd', 'q', 'e'];
+  // Don't let viewer shortcuts fire while the user is typing in a form field
+  // or the BYOK dialog is open.
+  const typingInUI = (e: KeyboardEvent): boolean => {
+    const t = e.target as HTMLElement | null;
+    if (t && (t.tagName === 'INPUT' || t.tagName === 'SELECT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return true;
+    return document.getElementById('dialog-overlay')?.classList.contains('open') ?? false;
+  };
   window.addEventListener('keydown', (e) => {
-    if ((e.target as HTMLElement).tagName === 'SELECT' || (e.target as HTMLElement).tagName === 'INPUT') return;
+    if (typingInUI(e)) return;
     if (e.key === ' ') { e.preventDefault(); ui.training ? (workerSend({ type: 'pause' }), ui.setTraining(false)) : (workerSend({ type: 'start' }), ui.setTraining(true)); return; }
     const k = e.key.toLowerCase();
     if (MOVE_KEYS.includes(k)) { moveKeys.add(k); return; }
