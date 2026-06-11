@@ -107,13 +107,14 @@ async function boot() {
     }
   }
 
-  function applyCheckpoint(buf: ArrayBuffer, label: string) {
+  function applyCheckpoint(buf: ArrayBuffer, label: string, isPretrained = false) {
     try {
       const { meta, weights } = decodeCheckpoint(buf);
       showcase.setWeights(weights);
       latestWeights = weights;
       latestTrainedSteps = meta.trainedSteps;
       autoPolicy = false; // explicit user load owns the policy now
+      ui.setPretrainedActive(isPretrained);
       workerSend({ type: 'loadWeights', weights, trainedSteps: meta.trainedSteps });
       ui.toast(`${label}: ${(meta.trainedSteps / 1e6).toFixed(1)}M steps (${meta.world})`);
     } catch (e) {
@@ -163,16 +164,47 @@ async function boot() {
           latestWeights = weights;
           latestTrainedSteps = meta.trainedSteps;
           workerSend({ type: 'loadWeights', weights: weights.slice(), trainedSteps: meta.trainedSteps });
+          ui.setPretrainedActive(true);
           return 'pretrained';
         }
       } catch { /* no bundled checkpoint — fall through to random */ }
+      ui.setPretrainedActive(false);
       return 'random'; // worker's fresh init already posted a random policy
     }
+    ui.setPretrainedActive(false);
     if (latestWeights) {
       workerSend({ type: 'loadWeights', weights: latestWeights.slice(), trainedSteps: latestTrainedSteps });
       return 'carried';
     }
     return 'random';
+  }
+
+  // Start/stop training — shared by the button and the Space shortcut.
+  // Starting flips ownership to the user (fine-tuning from the current policy).
+  function toggleTraining(): void {
+    if (ui.training) { workerSend({ type: 'pause' }); ui.setTraining(false); autosave(); }
+    else { autoPolicy = false; ui.setPretrainedActive(false); workerSend({ type: 'start' }); ui.setTraining(true); }
+  }
+
+  // ---------------- scoreboard (always-on, top-right) ----------------
+  let totalDelivered = 0;
+  let sbCache = '';
+  function updateScoreboard(): void {
+    const sb = document.getElementById('scoreboard')!;
+    const env = showcase.env;
+    let html: string;
+    if (task.mode === 'fetch') {
+      html = `<div class="sb-title">🔵 Fetch · ${level.manifest.name}</div>
+        <div class="sb-row"><span class="lbl">This run</span><span class="num">${env.delivered} / ${env.balls.length}</span></div>
+        <div class="sb-row"><span class="lbl">Status</span><span class="num ${env.carrying ? 'sb-carry' : ''}">${env.carrying ? 'carrying → goal' : 'seeking ball'}</span></div>
+        <div class="sb-row"><span class="lbl">Runs completed</span><span class="num">${showcase.episodes}</span></div>
+        <div class="sb-row"><span class="lbl">Total delivered</span><span class="num">${totalDelivered}</span></div>`;
+    } else {
+      html = `<div class="sb-title">🎯 Navigate · ${level.manifest.name}</div>
+        <div class="sb-row"><span class="lbl">Goals reached</span><span class="num sb-big">${showcase.successes}</span></div>
+        <div class="sb-row"><span class="lbl">Attempts</span><span class="num">${showcase.episodes}</span></div>`;
+    }
+    if (html !== sbCache) { sb.innerHTML = html; sbCache = html; }
   }
 
   // ---------------- world switching ----------------
@@ -210,12 +242,10 @@ async function boot() {
 
   // ---------------- UI ----------------
   const ui = new Ui({
-    onTrainToggle: () => {
-      if (ui.training) { workerSend({ type: 'pause' }); ui.setTraining(false); autosave(); }
-      else { autoPolicy = false; workerSend({ type: 'start' }); ui.setTraining(true); } // user now owns the policy (fine-tuning from here)
-    },
+    onTrainToggle: () => toggleTraining(),
     onResetPolicy: () => {
       autoPolicy = false;
+      ui.setPretrainedActive(false);
       if (ui.training) { workerSend({ type: 'pause' }); ui.setTraining(false); }
       initWorker(); // fresh random policy; the worker posts it straight back to the showcase
       ui.toast('Policy reset to random — press ▶ Start learning to train from scratch');
@@ -239,7 +269,7 @@ async function boot() {
       try {
         const res = await fetch(asset(`checkpoints/${file}`));
         if (!res.ok) throw new Error('no bundled checkpoint');
-        applyCheckpoint(await res.arrayBuffer(), 'Pretrained');
+        applyCheckpoint(await res.arrayBuffer(), 'Pretrained', true);
       } catch {
         ui.toast(`No ${file} bundled yet — run: npm run pretrain${task.mode === 'fetch' ? ' -- --task fetch' : ''}`);
       }
@@ -285,7 +315,6 @@ async function boot() {
       if (camera.follow) camera.resetFollow(showcase.env.yaw);
       ui.setToggle('follow', camera.follow);
     },
-    onToggleGreedy: () => { showcase.greedy = !showcase.greedy; ui.setToggle('greedy', showcase.greedy); },
     onRespawn: () => showcase.respawn(),
     onSpawnBall: spawnBall,
   });
@@ -298,6 +327,8 @@ async function boot() {
     }
   };
   showcase.onTaskEvent = (event, remaining) => {
+    if (event === 'deposit') totalDelivered++;
+    updateScoreboard();
     if (ui.training) return;
     if (event === 'pickup') ui.toast(`🔵 Picked up a ball — carry it to the goal`);
     else if (remaining > 0) ui.toast(`✅ Delivered! ${remaining} ball${remaining > 1 ? 's' : ''} to go`);
@@ -330,7 +361,6 @@ async function boot() {
       if (camera.follow) camera.resetFollow(showcase.env.yaw);
       ui.setToggle('follow', camera.follow);
     },
-    g: () => { showcase.greedy = !showcase.greedy; ui.setToggle('greedy', showcase.greedy); },
     r: () => showcase.respawn(),
     '1': () => spawnBall(0), '2': () => spawnBall(1), '3': () => spawnBall(2),
     '4': () => spawnBall(3), '5': () => spawnBall(4),
@@ -347,7 +377,7 @@ async function boot() {
   };
   window.addEventListener('keydown', (e) => {
     if (typingInUI(e)) return;
-    if (e.key === ' ') { e.preventDefault(); ui.training ? (workerSend({ type: 'pause' }), ui.setTraining(false)) : (workerSend({ type: 'start' }), ui.setTraining(true)); return; }
+    if (e.key === ' ') { e.preventDefault(); toggleTraining(); return; }
     const k = e.key.toLowerCase();
     if (MOVE_KEYS.includes(k)) { moveKeys.add(k); return; }
     keys[k]?.();
@@ -395,6 +425,7 @@ async function boot() {
       camera.chaseYaw(showcase.env.yaw, dt);
     }
     camera.update();
+    updateScoreboard();
   });
 
   document.getElementById('loading')!.classList.add('hidden');

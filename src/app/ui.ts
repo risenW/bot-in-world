@@ -20,8 +20,6 @@ export interface UiCallbacks {
   onToggleNav: () => void;
   onToggleCameraCollision: () => void;
   onToggleFollow: () => void;
-  onToggleSpectate: () => void;
-  onToggleGreedy: () => void;
   onRespawn: () => void;
   onSpawnBall: (colorIndex: number) => void;
 }
@@ -52,6 +50,7 @@ export class Ui {
   private ballSelect!: HTMLSelectElement;
   private taskButtons: Record<string, HTMLButtonElement> = {};
   private genChip!: HTMLElement;
+  private pretrainedBtn!: HTMLButtonElement;
   private createBtn!: HTMLButtonElement;
   private worldHint!: HTMLElement;
   backendAvailable = true;
@@ -178,7 +177,8 @@ export class Ui {
     crow1.appendChild(btn('📂 Load file', () => fileInput.click()));
     ckpt.appendChild(crow1);
     const crow2 = div('row');
-    crow2.appendChild(btn('⚡ Load pretrained', () => this.cb.onLoadPretrained()));
+    this.pretrainedBtn = btn('⚡ Load pretrained', () => this.cb.onLoadPretrained());
+    crow2.appendChild(this.pretrainedBtn);
     crow2.appendChild(btn('🕘 Autosave', () => this.cb.onLoadAutosave()));
     ckpt.appendChild(crow2);
     this.el.appendChild(ckpt);
@@ -188,11 +188,7 @@ export class Ui {
     const brow = div('row');
     this.toggles.follow = btn('🎥 Follow', () => this.cb.onToggleFollow());
     this.toggles.follow.classList.add('active');
-    this.toggles.spectate = btn('🛰 Spectate <kbd>V</kbd>', () => this.cb.onToggleSpectate());
-    this.toggles.greedy = btn('🎯 Greedy', () => this.cb.onToggleGreedy());
     brow.appendChild(this.toggles.follow);
-    brow.appendChild(this.toggles.spectate);
-    brow.appendChild(this.toggles.greedy);
     brow.appendChild(btn('♻ Respawn <kbd>R</kbd>', () => this.cb.onRespawn()));
     brow.appendChild(btn('🎲 New goal', () => this.cb.onNewGoal()));
     bot.appendChild(brow);
@@ -248,7 +244,13 @@ export class Ui {
     this.trainBtn.classList.toggle('active', on);
   }
 
-  setToggle(name: 'follow' | 'greedy' | 'nav' | 'cam', on: boolean): void {
+  // reflect whether the bundled pretrained policy is currently active
+  setPretrainedActive(on: boolean): void {
+    this.pretrainedBtn.classList.toggle('ckpt-active', on);
+    this.pretrainedBtn.innerHTML = on ? '✓ Pretrained loaded' : '⚡ Load pretrained';
+  }
+
+  setToggle(name: 'follow' | 'nav' | 'cam', on: boolean): void {
     this.toggles[name]?.classList.toggle('active', on);
   }
 
