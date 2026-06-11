@@ -1,6 +1,8 @@
 # 🤖 SpAItial Bot — watch a bot learn to walk through AI-generated worlds, live in your browser
 
-A humanoid bot teaches itself to navigate **3D worlds generated from a text prompt or a photo** with the [Spaitial API](https://developers.spaitial.ai) (gaussian splat + reconstructed collision mesh), trained with a TypeScript port of **[PufferLib](https://puffer.ai)'s PPO** — running **100% client-side** in a web worker at thousands of steps per second. No server, no GPU farm: open the page, press *Start learning*, and watch it figure out the world in minutes.
+A humanoid bot teaches itself to navigate **3D worlds generated from a text prompt or a photo** with the [Spaitial API](https://developers.spaitial.ai) (gaussian splat + reconstructed collision mesh), trained with a TypeScript port of **[PufferLib](https://puffer.ai)'s PPO**. The reinforcement learning runs **100% client-side** in a web worker at thousands of steps per second — no training server, no GPU farm. Open the page, press *Start learning*, and watch it figure out the world in minutes.
+
+> The small Vite dev server is only a thin proxy for **world generation** — it forwards Spaitial API calls (the API allowlists CORS to `app.spaitial.ai` only, so the browser can't call it directly) and converts the generated `.spz` splat to a PlayCanvas-loadable `.ply`. All RL training and inference is pure browser.
 
 Bring your own Spaitial API key, type a prompt (or drop in a photo), and a few minutes later the bot is learning to walk, climb, and fetch in *your* world.
 
@@ -22,12 +24,12 @@ npm install
 npm run dev        # open the printed URL
 ```
 
-The repo ships with a pretrained checkpoint (`public/checkpoints/pretrained.pfbt`, 84 KB). The big level assets (`world.ply`, `world.spz`, `mesh_simplified.ply`) are not in git — generate your own worlds (below) or grab them from the project's release assets and drop them into `public/levels/<id>/`.
+The repo ships with two pretrained checkpoints (`public/checkpoints/pretrained.pfbt` for navigate, `pretrained-fetch.pfbt` for fetch — ~85 KB each). The big level assets (`world.ply`, `world.spz`, `mesh_simplified.ply`) are not in git — generate your own worlds (below) or grab them from the project's release assets and drop them into `public/levels/<id>/`.
 
 In the app:
 
 - **▶ Start learning** — PPO training starts in a web worker; the bot in the scene always runs the latest weights, so you literally watch it get smarter. Charts show mean return + success rate.
-- **⚡ Load pretrained** — skip to the 3M-step policy.
+- **⚡ Load pretrained** — skip to the bundled policy for the current task (3M-step navigate / 8M-step fetch).
 - **💾 Save / 📂 Load** — checkpoints as `.pfbt` files (puffernet-style flat float32 weights + JSON header). Training also autosaves to localStorage every 15 s.
 - **Click anywhere on the floor** to send the bot there.
 - **World selector** — swap to the unseen gallery mid-session. Weights carry over; training pauses so you can evaluate first.
@@ -36,6 +38,7 @@ In the app:
 - **Climbing** — the bot hops up onto low platforms, crates, and steps like a tiny parkour humanoid. Set the max climb height (off / 0.35 / 0.5 / 0.7 m) in the Bot panel; the navgrid re-bakes climbable tops on the fly (low flat surfaces get promoted to walkable ground, crate rims are bridged as climb seams).
 - **Set the goal yourself** — click anywhere on the floor, or hit **🎲 New goal** for a random one.
 - **Two tasks** — 🧭 *Navigate* (walk to the goal) and 🔵 *Fetch balls*: a configurable number of blue balls are scattered through the world; the bot must find each one, pick it up by touching it, and carry it back to the green goal ring — fast, without hitting obstacles. Other-colored balls are decoys it never senses. Training auto-curriculums from 1 ball up to your setting. The two tasks share one network (32-dim egocentric obs), so navigation skill transfers into fetch training.
+- **Camera** — drag to orbit, wheel to zoom, <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> to fly and <kbd>Q</kbd>/<kbd>E</kbd> down/up (turns Follow off); re-enabling Follow snaps back behind the bot.
 - View toggles: splat / collision wireframe / navgrid (<kbd>B</kbd> <kbd>M</kbd> <kbd>P</kbd> <kbd>O</kbd> <kbd>N</kbd>), camera collision <kbd>C</kbd>, follow cam <kbd>F</kbd>, greedy policy <kbd>G</kbd>, respawn <kbd>R</kbd>, train toggle <kbd>Space</kbd>, physics balls <kbd>1</kbd>–<kbd>5</kbd>.
 
 ## Generate your own worlds
@@ -70,15 +73,18 @@ text prompt ──Spaitial API──▶ gaussian splat (.spz→.ply)   visuals (
                                                               │
                        ┌──────────────────────────────────────┘
                        ▼
-        NavEnv (sim/env.ts): 27-dim egocentric obs ─ 16-ray DDA lidar, goal bearing/distance
-        in body frame, speed, collision flag, last action. 6 discrete actions. Reward =
-        progress toward goal − step cost − collisions + 5.0 on arrival. Auto-curriculum
-        expands goal distance 4 m → 14 m as the success rate passes 80 %.
+        NavEnv (sim/env.ts): 32-dim egocentric obs ─ 16-ray DDA lidar, goal bearing/distance
+        in body frame, speed, collision flag, last action, plus fetch channels (carrying,
+        nearest target-ball bearing/distance, fraction remaining). 6 discrete actions.
+        Reward = progress toward the current objective − step cost − collisions, + pickup /
+        deposit / completion bonuses. Auto-curriculum grows goal distance (4→14 m) and, in
+        fetch, ball count (1→N) as the success rate climbs. One obs layout for both tasks,
+        so a nav policy transfers straight into fetch training.
                        │
                        ▼
         PPO (sim/ppo.ts): TypeScript port of PufferLib's PuffeRL — clipped surrogate +
         clipped value loss, GAE(λ=0.9), grad-norm clip 1.5, Adam(0.95, 0.999), 64 envs ×
-        64-step horizon, lr anneal. MLP 27→128→128→{6 logits, value} mirroring puffernet.
+        64-step horizon, lr anneal. MLP 32→128→128→{6 logits, value} mirroring puffernet.
         Runs in a web worker (~3–5k steps/s) or in Node (npm run pretrain).
 ```
 
