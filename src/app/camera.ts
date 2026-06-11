@@ -53,6 +53,26 @@ export class OrbitCamera {
     this.target.lerp(this.target, p, Math.min(1, smooth));
   }
 
+  // Snap back to the ideal chase framing (used when Follow is re-enabled).
+  resetFollow(botYaw: number): void {
+    this.pitch = -0.3;
+    this.distance = 3.4;
+    this.clampedDist = 3.4;
+    this.yaw = botYaw + Math.PI;
+    this.lastDragTime = -Infinity; // let the chase cam take over immediately
+  }
+
+  // Free-fly: move the orbit target with WASD/QE (camera-relative, horizontal).
+  moveFree(f: number, r: number, u: number, dt: number, fast = false): void {
+    const speed = (fast ? 9 : 4) * dt;
+    const fx = -Math.sin(this.yaw), fz = -Math.cos(this.yaw);
+    // right = forward x up
+    const rx = -fz, rz = fx;
+    this.target.x += (fx * f + rx * r) * speed;
+    this.target.z += (fz * f + rz * r) * speed;
+    this.target.y += u * speed;
+  }
+
   // Chase-cam: trail behind the bot's heading (the path behind it is open space,
   // so the collision clamp rarely kicks in). Suspended ~2s after a manual drag.
   chaseYaw(botYaw: number, dt: number): void {

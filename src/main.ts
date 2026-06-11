@@ -215,7 +215,11 @@ async function boot() {
     onViewMode: (mode: ViewMode) => { level.setMode(mode); ui.setViewMode(mode); },
     onToggleNav: () => ui.setToggle('nav', level.toggleNav()),
     onToggleCameraCollision: () => { camera.collision = !camera.collision; ui.setToggle('cam', camera.collision); },
-    onToggleFollow: () => { camera.follow = !camera.follow; ui.setToggle('follow', camera.follow); },
+    onToggleFollow: () => {
+      camera.follow = !camera.follow;
+      if (camera.follow) camera.resetFollow(showcase.env.yaw);
+      ui.setToggle('follow', camera.follow);
+    },
     onToggleGreedy: () => { showcase.greedy = !showcase.greedy; ui.setToggle('greedy', showcase.greedy); },
     onRespawn: () => showcase.respawn(),
     onSpawnBall: spawnBall,
@@ -240,17 +244,28 @@ async function boot() {
     o: () => { level.setMode('mesh-only'); ui.setViewMode('mesh-only'); },
     n: () => ui.setToggle('nav', level.toggleNav()),
     c: () => { camera.collision = !camera.collision; ui.setToggle('cam', camera.collision); },
-    f: () => { camera.follow = !camera.follow; ui.setToggle('follow', camera.follow); },
+    f: () => {
+      camera.follow = !camera.follow;
+      if (camera.follow) camera.resetFollow(showcase.env.yaw);
+      ui.setToggle('follow', camera.follow);
+    },
     g: () => { showcase.greedy = !showcase.greedy; ui.setToggle('greedy', showcase.greedy); },
     r: () => showcase.respawn(),
     '1': () => spawnBall(0), '2': () => spawnBall(1), '3': () => spawnBall(2),
     '4': () => spawnBall(3), '5': () => spawnBall(4),
   };
+  // WASD/QE free-fly (auto-disengages follow mode), shift = faster
+  const moveKeys = new Set<string>();
+  const MOVE_KEYS = ['w', 'a', 's', 'd', 'q', 'e'];
   window.addEventListener('keydown', (e) => {
     if ((e.target as HTMLElement).tagName === 'SELECT' || (e.target as HTMLElement).tagName === 'INPUT') return;
     if (e.key === ' ') { e.preventDefault(); ui.training ? (workerSend({ type: 'pause' }), ui.setTraining(false)) : (workerSend({ type: 'start' }), ui.setTraining(true)); return; }
-    keys[e.key.toLowerCase()]?.();
+    const k = e.key.toLowerCase();
+    if (MOVE_KEYS.includes(k)) { moveKeys.add(k); return; }
+    keys[k]?.();
   });
+  window.addEventListener('keyup', (e) => moveKeys.delete(e.key.toLowerCase()));
+  window.addEventListener('blur', () => moveKeys.clear());
 
   // click (not drag) on floor sets the bot's goal
   let downX = 0, downY = 0, downT = 0;
@@ -279,6 +294,13 @@ async function boot() {
       b.entity.setRotation(q.x, q.y, q.z, q.w);
     }
     showcase.update(dt);
+    const mf = (moveKeys.has('w') ? 1 : 0) - (moveKeys.has('s') ? 1 : 0);
+    const mr = (moveKeys.has('d') ? 1 : 0) - (moveKeys.has('a') ? 1 : 0);
+    const mu = (moveKeys.has('e') ? 1 : 0) - (moveKeys.has('q') ? 1 : 0);
+    if (mf || mr || mu) {
+      if (camera.follow) { camera.follow = false; ui.setToggle('follow', false); }
+      camera.moveFree(mf, mr, mu, dt);
+    }
     if (camera.follow) {
       const p = showcase.bot.position;
       camera.target.lerp(camera.target, new pc.Vec3(p.x, p.y + 0.8, p.z), Math.min(1, dt * 5));

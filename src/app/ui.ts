@@ -129,7 +129,7 @@ export class Ui {
     brow.appendChild(btn('♻ Respawn <kbd>R</kbd>', () => this.cb.onRespawn()));
     brow.appendChild(btn('🎲 New goal', () => this.cb.onNewGoal()));
     bot.appendChild(brow);
-    bot.appendChild(h(`<div class="hint"><b>Click anywhere on the floor</b> to set the goal yourself — the bot walks there. Drag to orbit, wheel to zoom.</div>`));
+    bot.appendChild(h(`<div class="hint"><b>Click anywhere on the floor</b> to set the goal yourself — the bot walks there. Drag to orbit, wheel to zoom, <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd><kbd>Q</kbd><kbd>E</kbd> to fly the camera (turns Follow off).</div>`));
     this.el.appendChild(bot);
 
     // --- View ---

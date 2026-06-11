@@ -146,12 +146,12 @@ export class GoalMarker {
 
   constructor(app: pc.Application) {
     this.root = new pc.Entity('goal');
+    // opaque emissive: transparent/additive materials lose the depth-sort
+    // battle against the gsplat and vanish from some camera angles
     const glow = new pc.StandardMaterial();
+    glow.diffuse = new pc.Color(0.02, 0.08, 0.03);
     glow.emissive = new pc.Color(0.45, 1.0, 0.55);
     glow.emissiveIntensity = 2.2;
-    glow.opacity = 0.85;
-    glow.blendType = pc.BLEND_ADDITIVE;
-    glow.depthWrite = false;
     glow.update();
 
     this.ring = new pc.Entity('goal-ring');
