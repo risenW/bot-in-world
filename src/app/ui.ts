@@ -344,10 +344,10 @@ export class Ui {
         <div style="border-top:1px solid rgba(255,255,255,0.1); margin:16px 0 0; padding-top:12px"></div>
         <label>Reuse a world already generated with this key</label>
         <div class="row" style="margin-top:0">
-          <input type="text" id="byok-import" class="link-input" placeholder="req_… or app.spaitial.ai/worlds/<id>" />
+          <input type="text" id="byok-import" class="link-input" placeholder="request ID — req_…" />
           <button id="byok-import-go">📥 Import</button>
         </div>
-        <div class="hint">Skip generation — pull an existing world's splat + mesh straight from the API. A request ID is instant; a world ID is looked up among your recent requests.</div>
+        <div class="hint">Skip generation — pull an existing world's splat + mesh straight from the API by its <b>request ID</b> (the <code>req_…</code> returned when it was created).</div>
         <div class="progress" id="byok-progress"></div>
         <div class="hint" style="margin-top:10px">Your key goes only to your local dev server, is held in memory for this job, and is never stored on disk. It is remembered in this browser (localStorage) for convenience.</div>
       </div>`);
@@ -424,7 +424,7 @@ export class Ui {
       if (!key.startsWith('spt_')) { progress.classList.add('show'); progress.textContent = 'Enter your API key first'; return; }
       localStorage.setItem('spaitial-api-key', key);
       const id = importInput.value.trim();
-      if (!id) { progress.classList.add('show'); progress.textContent = 'Paste a request ID or world link first'; return; }
+      if (!/req_[0-9a-f]{32}/.test(id)) { progress.classList.add('show'); progress.textContent = 'Paste a request ID (req_…)'; return; }
       importBtn.disabled = true;
       progress.classList.add('show');
       progress.innerHTML = '<span class="spinner"></span>Looking up world via the API…';

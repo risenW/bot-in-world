@@ -120,37 +120,6 @@ async function runCreateJob(reqId: string, key: string): Promise<void> {
   }
 }
 
-// Resolve a user-pasted id to a request_id we can run the mesh pipeline on.
-// Accepts a req_… directly, or a world UUID / app.spaitial.ai link (resolved
-// by scanning this key's recent requests for a matching world.id).
-async function resolveRequestId(raw: string, key: string): Promise<string> {
-  const reqMatch = raw.match(/req_[0-9a-f]{32}/);
-  if (reqMatch) return reqMatch[0];
-  const uuidMatch = raw.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i);
-  if (!uuidMatch) throw new Error('paste a request ID (req_…) or a world link / ID');
-  const uuid = uuidMatch[0].toLowerCase();
-  const auth = { Authorization: `Bearer ${key}` };
-  const PAGE = 40, MAX_SCAN = 120;
-  let offset = 0, scanned = 0;
-  while (scanned < MAX_SCAN) {
-    const listRes = await fetch(`${API}/v1/worlds/requests?limit=${PAGE}&offset=${offset}`, { headers: auth });
-    if (!listRes.ok) throw new Error(`could not list your worlds (${listRes.status})`);
-    const list = (await listRes.json()) as { requests?: { request_id: string }[]; has_more?: boolean };
-    const reqs = list.requests ?? [];
-    if (reqs.length === 0) break;
-    const details = await Promise.all(reqs.map((r) =>
-      fetch(`${API}/v1/worlds/requests/${r.request_id}`, { headers: auth }).then((x) => x.json()).catch(() => null)));
-    for (const d of details) {
-      const w = (d as { world?: { id?: string } } | null)?.world;
-      if (w?.id?.toLowerCase() === uuid) return (d as { request_id: string }).request_id;
-    }
-    scanned += reqs.length;
-    offset += PAGE;
-    if (!list.has_more) break;
-  }
-  throw new Error('that world is not among your API key’s requests — paste its request ID (req_…) instead');
-}
-
 function createdStatus(reqId: string): CreateJob | null {
   const job = jobs.get(reqId);
   if (job) return job;
@@ -219,13 +188,15 @@ function handler() {
         return;
       }
 
-      // import / reuse a world already generated with this key (by request_id
-      // or world UUID). Runs the same download + mesh-export + convert pipeline.
+      // import / reuse a world already generated with this key, by request ID.
+      // Runs the same download + mesh-export + convert pipeline.
       if (url === '/ext/import-world' && req.method === 'POST') {
         const key = (req.headers['x-spaitial-key'] as string | undefined)?.trim();
         if (!key || !key.startsWith('spt_')) { json(res, 401, { error: 'missing or invalid x-spaitial-key' }); return; }
         const body = JSON.parse(await readBody(req, 4096)) as { id?: string };
-        const reqId = await resolveRequestId(String(body.id ?? '').trim(), key);
+        const m = String(body.id ?? '').trim().match(/req_[0-9a-f]{32}/);
+        if (!m) { json(res, 400, { error: 'paste a request ID (req_…)' }); return; }
+        const reqId = m[0];
         const st = createdStatus(reqId);
         if (!st || st.phase === 'error') { jobs.set(reqId, { phase: 'generating' }); void runCreateJob(reqId, key); }
         json(res, 202, { request_id: reqId });
