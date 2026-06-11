@@ -3,7 +3,7 @@
 
 import * as pc from 'playcanvas';
 import { NavEnv, OBS_SIZE, N_ACTIONS, DT, TaskConfig, DEFAULT_TASK } from '../sim/env';
-import { NavGrid, groundHeight, isWalkable, castRay } from '../sim/navgrid';
+import { NavGrid, groundHeight, isWalkable, castRay, cellCenter } from '../sim/navgrid';
 import { Policy, makeActivations, Activations, softmaxRow, sampleCategorical, argmaxRow } from '../sim/ppo';
 import { mulberry32, Rng } from '../sim/rng';
 import { HumanoidBot, GoalMarker } from './bot';
@@ -67,7 +67,7 @@ export class Showcase {
     this.goal = new GoalMarker(app);
     this.carryBall = makeBallEntity(app, TARGET_COLOR);
     this.carryBall.enabled = false;
-    this.respawn();
+    this.respawn(true);
   }
 
   private makeEnv(): NavEnv {
@@ -81,7 +81,7 @@ export class Showcase {
     this.grid = grid;
     this.env = this.makeEnv();
     this.episodes = 0; this.successes = 0;
-    this.respawn();
+    this.respawn(true);
   }
 
   setTask(task: TaskConfig): void {
@@ -123,20 +123,48 @@ export class Showcase {
     return true;
   }
 
-  respawn(): void {
-    // prefer open spots so the bot (and camera) aren't wedged against geometry
-    for (let attempt = 0; attempt < 30; attempt++) {
-      this.env.reset();
-      let minClear = Infinity;
-      for (let i = 0; i < 8; i++) {
-        const ang = (i / 8) * Math.PI * 2;
-        minClear = Math.min(minClear, castRay(this.grid, this.env.x, this.env.z, Math.sin(ang), Math.cos(ang), 2));
+  // centered=true spawns near the world origin (best splat quality) — used on
+  // world load so the first thing people see isn't a degraded edge.
+  respawn(centered = false): void {
+    if (centered) {
+      const ci = this.nearestCenterCell();
+      const [cx, cz] = cellCenter(this.grid, ci);
+      this.env.x = cx; this.env.z = cz;
+      this.env.yaw = this.rng() * Math.PI * 2;
+      this.env.speed = 0;
+      // keep the first goal central too, so the bot doesn't immediately walk
+      // out toward a degraded edge
+      const prevMax = this.env.goalDistMax;
+      this.env.goalDistMax = Math.min(prevMax, 6);
+      this.env.reset(true); // keep the centered position, fresh goal/balls
+      this.env.goalDistMax = prevMax;
+    } else {
+      // prefer open spots so the bot (and camera) aren't wedged against geometry
+      for (let attempt = 0; attempt < 30; attempt++) {
+        this.env.reset();
+        let minClear = Infinity;
+        for (let i = 0; i < 8; i++) {
+          const ang = (i / 8) * Math.PI * 2;
+          minClear = Math.min(minClear, castRay(this.grid, this.env.x, this.env.z, Math.sin(ang), Math.cos(ang), 2));
+        }
+        if (minClear > 0.9) break;
       }
-      if (minClear > 0.9) break;
     }
     this.bot.snapTo(this.env.x, this.env.z, this.env.yaw);
     this.syncGoal();
     this.syncBalls();
+  }
+
+  // walkable spawn cell closest to the world XZ origin (the splat capture point)
+  private nearestCenterCell(): number {
+    const g = this.grid;
+    let best = g.spawn[0], bd = Infinity;
+    for (const ci of g.spawn) {
+      const [x, z] = cellCenter(g, ci);
+      const d = x * x + z * z;
+      if (d < bd) { bd = d; best = ci; }
+    }
+    return best;
   }
 
   private syncGoal(): void {
