@@ -65,6 +65,11 @@ async function boot() {
   let latestTrainedSteps = 0;
   let lastStats: TrainStats | null = null;
   let lastAutosave = 0;
+  // true while the bot is showing an auto-loaded pretrained policy — every
+  // scene load installs the task's pretrained so the bot is competent on
+  // arrival. Flips false once the user trains, loads, or resets, after which
+  // their weights carry across world/task swaps instead.
+  let autoPolicy = true;
 
   const task: TaskConfig = { mode: 'nav', numBalls: 4, numDistractors: 3 };
   const workerSend = (msg: WorkerInMsg) => worker.postMessage(msg);
@@ -108,6 +113,7 @@ async function boot() {
       showcase.setWeights(weights);
       latestWeights = weights;
       latestTrainedSteps = meta.trainedSteps;
+      autoPolicy = false; // explicit user load owns the policy now
       workerSend({ type: 'loadWeights', weights, trainedSteps: meta.trainedSteps });
       ui.toast(`${label}: ${(meta.trainedSteps / 1e6).toFixed(1)}M steps (${meta.world})`);
     } catch (e) {
@@ -143,6 +149,32 @@ async function boot() {
     }
   }
 
+  // Install the right policy after the worker is (re)initialised for a scene:
+  // the task's pretrained checkpoint while autoPolicy holds, otherwise the
+  // user's current weights carried across the swap.
+  async function installScenePolicy(): Promise<'pretrained' | 'carried' | 'random'> {
+    if (autoPolicy) {
+      const file = task.mode === 'fetch' ? 'pretrained-fetch.pfbt' : 'pretrained.pfbt';
+      try {
+        const res = await fetch(asset(`checkpoints/${file}`));
+        if (res.ok) {
+          const { meta, weights } = decodeCheckpoint(await res.arrayBuffer());
+          showcase.setWeights(weights);
+          latestWeights = weights;
+          latestTrainedSteps = meta.trainedSteps;
+          workerSend({ type: 'loadWeights', weights: weights.slice(), trainedSteps: meta.trainedSteps });
+          return 'pretrained';
+        }
+      } catch { /* no bundled checkpoint — fall through to random */ }
+      return 'random'; // worker's fresh init already posted a random policy
+    }
+    if (latestWeights) {
+      workerSend({ type: 'loadWeights', weights: latestWeights.slice(), trainedSteps: latestTrainedSteps });
+      return 'carried';
+    }
+    return 'random';
+  }
+
   // ---------------- world switching ----------------
   let switching = false;
   async function switchWorld(id: string) {
@@ -158,15 +190,16 @@ async function boot() {
       showcase.setGrid(level.grid);
       camera.target.set(showcase.env.x, 1.2, showcase.env.z);
       camera.distance = 4.2;
-      // re-init trainer on the new grid, carrying weights over
+      // re-init trainer on the new grid, then install the scene's policy
       initWorker();
-      if (latestWeights) workerSend({ type: 'loadWeights', weights: latestWeights.slice(), trainedSteps: latestTrainedSteps });
+      const how = await installScenePolicy();
       ui.setViewMode(level.mode);
       if (id.startsWith('custom:')) ui.addCustomWorld(id, level.manifest.name);
       else ui.setWorld(id);
-      ui.toast(wasTraining
-        ? `Switched to ${level.manifest.name} — training paused, policy carried over`
-        : `Switched to ${level.manifest.name}`);
+      const policyNote = how === 'pretrained' ? 'pretrained policy loaded'
+        : how === 'carried' ? `your policy carried over${wasTraining ? ', training paused' : ''}`
+        : 'untrained — press Start learning';
+      ui.toast(`Switched to ${level.manifest.name} — ${policyNote}`);
     } catch (e) {
       ui.toast(`Failed to load world: ${(e as Error).message}`);
     } finally {
@@ -179,7 +212,13 @@ async function boot() {
   const ui = new Ui({
     onTrainToggle: () => {
       if (ui.training) { workerSend({ type: 'pause' }); ui.setTraining(false); autosave(); }
-      else { workerSend({ type: 'start' }); ui.setTraining(true); }
+      else { autoPolicy = false; workerSend({ type: 'start' }); ui.setTraining(true); } // user now owns the policy (fine-tuning from here)
+    },
+    onResetPolicy: () => {
+      autoPolicy = false;
+      if (ui.training) { workerSend({ type: 'pause' }); ui.setTraining(false); }
+      initWorker(); // fresh random policy; the worker posts it straight back to the showcase
+      ui.toast('Policy reset to random — press ▶ Start learning to train from scratch');
     },
     onSaveCheckpoint: () => {
       if (!latestWeights) { ui.toast('Nothing to save yet — start learning first'); return; }
@@ -222,7 +261,7 @@ async function boot() {
       level.rebake(height);
       showcase.setGrid(level.grid);
       initWorker();
-      if (latestWeights) workerSend({ type: 'loadWeights', weights: latestWeights.slice(), trainedSteps: latestTrainedSteps });
+      void installScenePolicy();
       ui.toast(height > 0 ? `Max climb height ${height} m — navgrid rebaked` : 'Climbing off — stairs only');
     },
     onNewGoal: () => { showcase.newGoal(); ui.toast('New random goal set'); },
@@ -233,9 +272,9 @@ async function boot() {
       if (wasTraining) { workerSend({ type: 'pause' }); ui.setTraining(false); }
       showcase.setTask(task);
       initWorker();
-      if (latestWeights) workerSend({ type: 'loadWeights', weights: latestWeights.slice(), trainedSteps: latestTrainedSteps });
+      void installScenePolicy();
       ui.toast(mode === 'fetch'
-        ? `Task: fetch ${numBalls} blue ball${numBalls > 1 ? 's' : ''} — weights carried over${wasTraining ? ', training paused' : ''}`
+        ? `Task: fetch ${numBalls} blue ball${numBalls > 1 ? 's' : ''}${wasTraining ? ' — training paused' : ''}`
         : 'Task: navigate to the goal');
     },
     onViewMode: (mode: ViewMode) => { level.setMode(mode); ui.setViewMode(mode); },
@@ -265,6 +304,11 @@ async function boot() {
   };
 
   initWorker();
+  // start with the trained policy so the bot is competent on arrival
+  installScenePolicy().then((how) => {
+    if (how === 'pretrained') ui.toast('Pretrained policy loaded — ▶ Start learning to fine-tune, or ↺ Reset to train from scratch');
+    else ui.toast('Press ▶ Start learning to train the bot');
+  });
 
   // detect whether the world-generation backend is present (it isn't on a
   // static host like GitHub Pages) and gate BYOK/import accordingly
@@ -272,9 +316,6 @@ async function boot() {
     .then((r) => r.ok)
     .catch(() => false)
     .then((ok) => ui.setBackendAvailable(ok));
-
-  // offer autosave restore
-  if (localStorage.getItem(AUTOSAVE_KEY)) ui.toast('Autosave found — “🕘 Autosave” restores your last policy');
 
   // ---------------- input ----------------
   const keys: Record<string, () => void> = {
@@ -357,7 +398,7 @@ async function boot() {
   });
 
   document.getElementById('loading')!.classList.add('hidden');
-  ui.toast('Press ▶ Start learning, or ⚡ Load pretrained to skip ahead');
+  // (the policy-loaded toast is shown by installScenePolicy above)
 }
 
 function bufToB64(buf: ArrayBuffer): string {

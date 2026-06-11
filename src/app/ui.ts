@@ -6,6 +6,7 @@ import { ViewMode } from './level';
 
 export interface UiCallbacks {
   onTrainToggle: () => void;
+  onResetPolicy: () => void;
   onSaveCheckpoint: () => void;
   onLoadCheckpointFile: (file: File) => void;
   onLoadPretrained: () => void;
@@ -138,7 +139,9 @@ export class Ui {
     this.trainBtn = btn('▶ Start learning', () => this.cb.onTrainToggle());
     this.trainBtn.classList.add('primary');
     trow.appendChild(this.trainBtn);
+    trow.appendChild(btn('↺ Reset', () => this.cb.onResetPolicy()));
     training.appendChild(trow);
+    training.appendChild(h(`<div class="hint">The bot starts on the <b>pretrained</b> policy. <b>Start learning</b> fine-tunes it live; <b>↺ Reset</b> wipes to a random policy so you can watch it learn from scratch.</div>`));
 
     const grid = div('stat-grid');
     for (const [key, label] of [

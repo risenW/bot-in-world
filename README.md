@@ -34,8 +34,10 @@ Everything except world creation is pure static frontend, so the [live demo](htt
 
 In the app:
 
-- **▶ Start learning** — PPO training starts in a web worker; the bot in the scene always runs the latest weights, so you literally watch it get smarter. Charts show mean return + success rate.
-- **⚡ Load pretrained** — skip to the bundled policy for the current task (3M-step navigate / 8M-step fetch).
+- **Pretrained on arrival** — every scene loads the task's pretrained policy automatically, so the bot is competent the moment a world appears (and it carries that policy into unseen worlds — the generalization demo).
+- **▶ Start learning** — PPO training starts in a web worker and **fine-tunes** from the current policy; the bot in the scene always runs the latest weights, so you watch it improve live. Charts show mean return + success rate.
+- **↺ Reset** — wipe to a random policy to watch the bot learn from scratch.
+- **⚡ Load pretrained** — re-load the bundled policy for the current task (3M-step navigate / 8M-step fetch).
 - **💾 Save / 📂 Load** — checkpoints as `.pfbt` files (puffernet-style flat float32 weights + JSON header). Training also autosaves to localStorage every 15 s.
 - **Click anywhere on the floor** to send the bot there.
 - **World selector** — swap to the unseen gallery mid-session. Weights carry over; training pauses so you can evaluate first.
