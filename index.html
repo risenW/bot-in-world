@@ -91,6 +91,23 @@
         border: 2px solid var(--accent2); border-top-color: transparent;
         animation: spin 0.9s linear infinite; margin-right: 7px; vertical-align: -1px;
       }
+      #scoreboard {
+        position: fixed; top: 12px; right: 12px; z-index: 10; min-width: 168px;
+        border-radius: 12px; padding: 12px 14px;
+        background: var(--panel-bg); border: 1px solid var(--panel-border);
+        backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
+        box-shadow: 0 8px 32px rgba(0,0,0,0.45);
+        font-variant-numeric: tabular-nums; pointer-events: none;
+      }
+      #scoreboard .sb-title { font-size: 10px; text-transform: uppercase; letter-spacing: 1.2px; color: var(--muted); margin-bottom: 8px; }
+      #scoreboard .sb-row { display: flex; justify-content: space-between; gap: 16px; font-size: 13px; margin: 3px 0; }
+      #scoreboard .sb-row .lbl { color: var(--muted); }
+      #scoreboard .sb-row .num { font-weight: 700; color: var(--text); }
+      #scoreboard .sb-big { font-size: 22px; font-weight: 700; }
+      #scoreboard .sb-carry { color: var(--accent); }
+      @media (max-width: 720px) {
+        #scoreboard { top: 8px; right: 8px; padding: 9px 11px; min-width: 130px; }
+      }
       #dialog-overlay {
         position: fixed; inset: 0; z-index: 70; display: none;
         align-items: center; justify-content: center;
@@ -144,6 +161,7 @@
       <div class="step" id="loading-step">Booting…</div>
     </div>
     <div id="panel"></div>
+    <div id="scoreboard"></div>
     <div id="dialog-overlay"></div>
     <div id="toast"></div>
     <script type="module" src="/src/main.ts"></script>

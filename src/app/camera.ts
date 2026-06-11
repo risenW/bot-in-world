@@ -53,6 +53,17 @@ export class OrbitCamera {
     this.target.lerp(this.target, p, Math.min(1, smooth));
   }
 
+  // Top-corner overview that frames the whole scene (spectate mode).
+  overview(center: pc.Vec3, radius: number): void {
+    this.follow = false;
+    this.collision = false; // sit above the room; don't clamp on walls/roof
+    this.target.set(center.x, center.y, center.z);
+    this.yaw = Math.PI * 0.75; // look in from a corner
+    this.pitch = -0.95;        // steep downward
+    this.distance = Math.max(6, radius * 1.7);
+    this.clampedDist = this.distance;
+  }
+
   // Snap back to the ideal chase framing (used when Follow is re-enabled).
   resetFollow(botYaw: number): void {
     this.pitch = -0.3;

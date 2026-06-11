@@ -20,6 +20,7 @@ export interface UiCallbacks {
   onToggleNav: () => void;
   onToggleCameraCollision: () => void;
   onToggleFollow: () => void;
+  onToggleSpectate: () => void;
   onToggleGreedy: () => void;
   onRespawn: () => void;
   onSpawnBall: (colorIndex: number) => void;
@@ -187,8 +188,10 @@ export class Ui {
     const brow = div('row');
     this.toggles.follow = btn('🎥 Follow', () => this.cb.onToggleFollow());
     this.toggles.follow.classList.add('active');
+    this.toggles.spectate = btn('🛰 Spectate <kbd>V</kbd>', () => this.cb.onToggleSpectate());
     this.toggles.greedy = btn('🎯 Greedy', () => this.cb.onToggleGreedy());
     brow.appendChild(this.toggles.follow);
+    brow.appendChild(this.toggles.spectate);
     brow.appendChild(this.toggles.greedy);
     brow.appendChild(btn('♻ Respawn <kbd>R</kbd>', () => this.cb.onRespawn()));
     brow.appendChild(btn('🎲 New goal', () => this.cb.onNewGoal()));
