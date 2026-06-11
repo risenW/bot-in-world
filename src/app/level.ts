@@ -5,6 +5,7 @@ import * as pc from 'playcanvas';
 import RAPIER from '@dimforge/rapier3d-compat';
 import { parsePly, ParsedMesh } from '../sim/ply';
 import { bakeNavGrid, bakeNavGridFromSplat, gridToMesh, NavGrid, cellCenter } from '../sim/navgrid';
+import { asset } from '../util/paths';
 
 export interface LevelManifest {
   id: string;
@@ -87,16 +88,16 @@ export class Level {
         };
       } else {
         onProgress('Loading manifest…', 0.05);
-        this.manifest = (await (await fetch(`/levels/${levelId}/manifest.json`)).json()) as LevelManifest;
+        this.manifest = (await (await fetch(asset(`levels/${levelId}/manifest.json`))).json()) as LevelManifest;
       }
       const manifest = this.manifest;
 
       onProgress('Loading gaussian splat…', 0.1);
-      await this.loadSplat(manifest.splats[0].url);
+      await this.loadSplat(asset(manifest.splats[0].url));
       this.splatPts = this.splatPositions();
 
       onProgress('Downloading collision mesh…', 0.45);
-      const meshBuf = await (await fetch(manifest.collision[0].url)).arrayBuffer();
+      const meshBuf = await (await fetch(asset(manifest.collision[0].url))).arrayBuffer();
       onProgress('Parsing collision mesh…', 0.6);
       this.mesh = parsePly(meshBuf);
 

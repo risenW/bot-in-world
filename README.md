@@ -2,7 +2,9 @@
 
 A humanoid bot teaches itself to navigate **3D worlds generated from a text prompt or a photo** with the [Spaitial API](https://developers.spaitial.ai) (gaussian splat + reconstructed collision mesh), trained with a TypeScript port of **[PufferLib](https://puffer.ai)'s PPO**. The reinforcement learning runs **100% client-side** in a web worker at thousands of steps per second — no training server, no GPU farm. Open the page, press *Start learning*, and watch it figure out the world in minutes.
 
-> The small Vite dev server is only a thin proxy for **world generation** — it forwards Spaitial API calls and converts the generated `.spz` splat to a PlayCanvas-loadable `.ply`. All RL training and inference is pure browser.
+**▶ [Live demo](https://risenw.github.io/spaitial-bot/)** — two bundled worlds, train from scratch or load the pretrained policy, all in your browser. (Creating *new* worlds from the Spaitial API needs a quick local setup — see below.)
+
+> The small Vite dev server is only a thin proxy for **world generation** — it forwards Spaitial API calls and converts the generated `.spz` splat to a PlayCanvas-loadable splat. All RL training and inference is pure browser, which is why the hosted demo works as a static site.
 
 Bring your own Spaitial API key, type a prompt (or drop in a photo), and a few minutes later the bot is learning to walk, climb, and fetch in *your* world.
 
@@ -24,7 +26,11 @@ npm install
 npm run dev        # open the printed URL
 ```
 
-The repo ships with two pretrained checkpoints (`public/checkpoints/pretrained.pfbt` for navigate, `pretrained-fetch.pfbt` for fetch — ~85 KB each). The big level assets (`world.ply`, `world.spz`, `mesh_simplified.ply`) are not in git — generate your own worlds and drop them into `public/levels/<id>/`.
+The repo ships ready to play: two pretrained checkpoints (`pretrained.pfbt` / `pretrained-fetch.pfbt`, ~85 KB each) and two worlds as compressed `.sog` splats + collision meshes (~30 MB each) — the same assets the [live demo](https://risenw.github.io/spaitial-bot/) runs on. The uncompressed splat sources (`world.ply`, `world.spz`) are gitignored; you only need them to re-run the offline scripts.
+
+### Hosted demo vs. local
+
+Everything except world creation is pure static frontend, so the [live demo](https://risenw.github.io/spaitial-bot/) (auto-deployed to GitHub Pages) lets anyone train and watch the bot in the bundled worlds. **Creating or importing worlds via the Spaitial API needs the local dev server** — the API allowlists CORS to its own app and the `.spz`→splat conversion is a Node step, so it can't run on a static host. Clone + `npm run dev` and the "Create your own world" button lights up.
 
 In the app:
 

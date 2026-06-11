@@ -26,7 +26,7 @@
   },
   "splats": [
     {
-      "url": "/levels/warehouse/world.ply",
+      "url": "/levels/warehouse/world.sog",
       "format": "ply"
     }
   ],

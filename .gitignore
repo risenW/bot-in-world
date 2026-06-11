@@ -6,10 +6,13 @@ node_modules/
 dist/
 .venv-spz/
 
-# large generated level assets — regenerate via scripts/fetch-world.sh + splat-transform,
-# or download from the release assets. Manifests stay in git.
+# large source splat artifacts — regenerate via scripts/fetch-world.sh + splat-transform.
+# The deployable .sog (compressed splat) and the two demo worlds' collision meshes
+# ARE committed so the GitHub Pages build has playable scenes out of the box.
 public/levels/**/*.ply
 public/levels/**/*.spz
+!public/levels/warehouse/mesh_simplified.ply
+!public/levels/gallery/mesh_simplified.ply
 
 # scratch
 tmp/

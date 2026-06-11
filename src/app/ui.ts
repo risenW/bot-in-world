@@ -50,6 +50,9 @@ export class Ui {
   private ballSelect!: HTMLSelectElement;
   private taskButtons: Record<string, HTMLButtonElement> = {};
   private genChip!: HTMLElement;
+  private createBtn!: HTMLButtonElement;
+  private worldHint!: HTMLElement;
+  backendAvailable = true;
   private genState = new Map<string, GenEntry>();
   private genPoll: ReturnType<typeof setInterval> | null = null;
   private dialogReqId: string | null = null;        // job the open dialog is watching
@@ -92,14 +95,15 @@ export class Ui {
     row.appendChild(this.worldSelect);
     world.appendChild(row);
     const customRow = div('row');
-    const createBtn = btn('✨ Create your own world', () => this.openCreateDialog());
-    createBtn.classList.add('primary');
-    customRow.appendChild(createBtn);
+    this.createBtn = btn('✨ Create your own world', () => this.openCreateDialog());
+    this.createBtn.classList.add('primary');
+    customRow.appendChild(this.createBtn);
     world.appendChild(customRow);
     this.genChip = h(`<div class="gen-chip" style="display:none" title="Click to open the generation dialog"></div>`);
     this.genChip.onclick = () => this.openCreateDialog();
     world.appendChild(this.genChip);
-    world.appendChild(h(`<div class="hint">Generate a new world from text or an image with your <b>Spaitial API key</b>. Swap worlds anytime — the policy only sees egocentric lidar, so what it learned transfers.</div>`));
+    this.worldHint = h(`<div class="hint">Generate a new world from text or an image with your <b>Spaitial API key</b>. Swap worlds anytime — the policy only sees egocentric lidar, so what it learned transfers.</div>`);
+    world.appendChild(this.worldHint);
     this.el.appendChild(world);
     this.restoreCreatedWorlds();
     this.resumePending();
@@ -323,9 +327,37 @@ export class Ui {
     } catch { /* ok */ }
   }
 
+  // called from boot once we know whether the generation backend is reachable
+  setBackendAvailable(ok: boolean): void {
+    this.backendAvailable = ok;
+    if (!ok) {
+      this.createBtn.textContent = '✨ Create a world (local setup)';
+      this.worldHint.innerHTML = 'This is the hosted demo — try the two bundled worlds and watch the bot learn. <b>Creating new worlds</b> from text/images needs your Spaitial API key, which only works when you run the project locally (<code>npm run dev</code>). See the repo README.';
+    }
+  }
+
   private openCreateDialog(): void {
     const overlay = document.getElementById('dialog-overlay')!;
     overlay.innerHTML = '';
+    if (!this.backendAvailable) {
+      const info = h(`
+        <div class="dialog">
+          <h2>✨ Create your own world</h2>
+          <div class="sub">World generation talks to the Spaitial API and converts the result, which needs the project's local dev server — it isn't available on this hosted demo.</div>
+          <div class="hint" style="line-height:1.6">To create worlds from a text prompt or a photo with your own <a href="https://developers.spaitial.ai" target="_blank" style="color:var(--accent)">Spaitial API key</a>:
+          <ol style="margin:8px 0 0; padding-left:18px">
+            <li>Clone the repo and run <code>npm install</code></li>
+            <li><code>npm run dev</code></li>
+            <li>Open the printed URL and hit “Create your own world”</li>
+          </ol></div>
+          <div class="row" style="margin-top:14px"><button id="byok-close">Got it</button></div>
+        </div>`);
+      overlay.appendChild(info);
+      overlay.classList.add('open');
+      (info.querySelector('#byok-close') as HTMLButtonElement).onclick = () => overlay.classList.remove('open');
+      overlay.onclick = (e) => { if (e.target === overlay) overlay.classList.remove('open'); };
+      return;
+    }
     const card = h(`
       <div class="dialog">
         <h2>✨ Create a world with the Spaitial API</h2>

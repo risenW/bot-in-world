@@ -10,6 +10,7 @@ import { OrbitCamera } from './app/camera';
 import { Ui } from './app/ui';
 import { toTransfer, groundHeight, isWalkable } from './sim/navgrid';
 import { encodeCheckpoint, decodeCheckpoint } from './sim/checkpoint';
+import { asset } from './util/paths';
 import { TrainStats } from './sim/vectrain';
 import { TaskConfig } from './sim/env';
 import type { WorkerInMsg, WorkerOutMsg } from './trainer.worker';
@@ -197,7 +198,7 @@ async function boot() {
     onLoadPretrained: async () => {
       const file = task.mode === 'fetch' ? 'pretrained-fetch.pfbt' : 'pretrained.pfbt';
       try {
-        const res = await fetch(`/checkpoints/${file}`);
+        const res = await fetch(asset(`checkpoints/${file}`));
         if (!res.ok) throw new Error('no bundled checkpoint');
         applyCheckpoint(await res.arrayBuffer(), 'Pretrained');
       } catch {
@@ -264,6 +265,13 @@ async function boot() {
   };
 
   initWorker();
+
+  // detect whether the world-generation backend is present (it isn't on a
+  // static host like GitHub Pages) and gate BYOK/import accordingly
+  fetch(asset('ext/health'))
+    .then((r) => r.ok)
+    .catch(() => false)
+    .then((ok) => ui.setBackendAvailable(ok));
 
   // offer autosave restore
   if (localStorage.getItem(AUTOSAVE_KEY)) ui.toast('Autosave found — “🕘 Autosave” restores your last policy');

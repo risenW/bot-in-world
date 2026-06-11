@@ -26,7 +26,7 @@
   },
   "splats": [
     {
-      "url": "/levels/gallery/world.ply",
+      "url": "/levels/gallery/world.sog",
       "format": "ply"
     }
   ],

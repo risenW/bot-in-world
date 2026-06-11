@@ -1,6 +1,6 @@
 import { defineConfig, type Plugin } from 'vite';
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import { existsSync, mkdirSync, createReadStream, statSync, writeFileSync, readFileSync } from 'node:fs';
+import { existsSync, mkdirSync, createReadStream, statSync, writeFileSync, readFileSync, readdirSync, rmSync } from 'node:fs';
 import { writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { execFile } from 'node:child_process';
@@ -160,6 +160,10 @@ function handler() {
   return async (req: IncomingMessage, res: ServerResponse, next: () => void) => {
     const url = req.url ?? '';
     try {
+      // lets the app detect that the generation backend is present (it isn't on
+      // a static host like GitHub Pages, where BYOK/import are disabled)
+      if (url === '/ext/health') { json(res, 200, { ok: true }); return; }
+
       if (url === '/ext/create-world' && req.method === 'POST') {
         const key = (req.headers['x-spaitial-key'] as string | undefined)?.trim();
         if (!key || !key.startsWith('spt_')) { json(res, 401, { error: 'missing or invalid x-spaitial-key' }); return; }
@@ -263,6 +267,29 @@ function spaitialPlugin(): Plugin {
   };
 }
 
+// Vite copies all of public/ into dist/. Drop the heavy splat SOURCES
+// (world.ply ~200MB, world.spz ~36MB) from the build — the deploy only needs
+// the compressed world.sog + collision mesh. Local dev keeps them for scripts.
+function pruneHeavyAssets(): Plugin {
+  return {
+    name: 'prune-heavy-assets',
+    apply: 'build',
+    closeBundle() {
+      const levels = resolve(__dirname, 'dist/levels');
+      if (!existsSync(levels)) return;
+      for (const id of readdirSync(levels)) {
+        for (const f of ['world.ply', 'world.spz']) {
+          const p = resolve(levels, id, f);
+          if (existsSync(p)) rmSync(p);
+        }
+      }
+    },
+  };
+}
+
 export default defineConfig({
-  plugins: [spaitialPlugin()],
+  // GitHub Pages project sites serve under /<repo>/. The deploy workflow sets
+  // DEPLOY_BASE; local dev/preview stay at root.
+  base: process.env.DEPLOY_BASE || '/',
+  plugins: [spaitialPlugin(), pruneHeavyAssets()],
 });
