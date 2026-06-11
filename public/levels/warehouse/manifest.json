@@ -1,8 +1,8 @@
 {
   "version": "1.0",
   "id": "warehouse",
-  "name": "Obstacle Warehouse",
-  "description": "Industrial loft obstacle course — the training world.",
+  "name": "Obstacle Warehouse (unseen test)",
+  "description": "Industrial loft obstacle course — never seen during training. Swap here to test generalization.",
   "transform": {
     "origin": [
       0,

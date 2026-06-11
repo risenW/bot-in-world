@@ -1,8 +1,8 @@
 {
   "version": "1.0",
   "id": "gallery",
-  "name": "Gallery (unseen world)",
-  "description": "Museum gallery — never seen during training. Swap here to test generalization.",
+  "name": "Gallery (training)",
+  "description": "Museum gallery — the world the shipped policy is trained in.",
   "transform": {
     "origin": [
       0,

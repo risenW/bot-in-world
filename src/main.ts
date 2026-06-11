@@ -52,7 +52,7 @@ async function boot() {
 
   // level
   const level = new Level(app, world);
-  await level.load('warehouse', setLoading);
+  await level.load('gallery', setLoading);
 
   // camera + showcase bot
   const camera = new OrbitCamera(app, world, () => level.levelCollider);

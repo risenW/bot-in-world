@@ -90,8 +90,8 @@ export class Ui {
     const row = div('row');
     this.worldSelect = document.createElement('select');
     this.worldSelect.innerHTML = `
-      <option value="warehouse">Obstacle Warehouse (training)</option>
-      <option value="gallery">Gallery (unseen world)</option>`;
+      <option value="gallery">Gallery (training)</option>
+      <option value="warehouse">Obstacle Warehouse (unseen test)</option>`;
     this.worldSelect.onchange = () => this.cb.onWorldChange(this.worldSelect.value);
     row.appendChild(this.worldSelect);
     world.appendChild(row);

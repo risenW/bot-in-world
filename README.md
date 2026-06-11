@@ -10,14 +10,14 @@ Bring your own Spaitial API key, type a prompt (or drop in a photo), and a few m
 
 Because the policy only ever sees **egocentric observations** (a 16-ray lidar, the goal bearing in its own body frame, its own speed), it learns *navigation*, not *a map*. Swap in a world it has never seen and it keeps walking.
 
-**Trained on the warehouse only, evaluated greedy:**
+**Trained on the gallery only, evaluated greedy:**
 
 | Task | World | Success rate | Avg episode |
 | --- | --- | --- | --- |
-| Navigate (3M steps) | Obstacle Warehouse (training world) | 97.0 % | 60 steps |
-| Navigate | Gallery (**never seen during training**) | **100 %** | 44 steps |
-| Fetch 4 balls (8M steps) | Obstacle Warehouse (training world) | 96.0 % | 458 steps |
-| Fetch 4 balls | Gallery (**never seen**) | **99.0 %** | 469 steps |
+| Navigate (3M steps) | Gallery (training world) | 100 % | 43 steps |
+| Navigate | Obstacle Warehouse (**never seen during training**) | **96.5 %** | 64 steps |
+| Fetch 4 balls (8M steps) | Gallery (training world) | 100 % | 445 steps |
+| Fetch 4 balls | Obstacle Warehouse (**never seen**) | **82.0 %** | 620 steps |
 
 ## Run it
 
@@ -101,12 +101,12 @@ Checkpoints are **puffernet-compatible flat weights** (all layers flattened and 
 ### Scripts
 
 ```bash
-npm run pretrain -- --level warehouse --steps 3000000        # nav → pretrained.pfbt
-npm run pretrain -- --task fetch --balls 4 --steps 8000000   # fetch → pretrained-fetch.pfbt
-npx tsx scripts/eval.ts --level gallery --episodes 200       # generalization eval
-npx tsx scripts/eval.ts --level gallery --task fetch         # fetch eval on unseen world
-npm run bake -- --level warehouse                            # navgrid stats / manifest bounds
-./scripts/fetch-world.sh <req_id> <level-id>                 # download Spaitial artifacts
+npm run pretrain -- --level gallery --steps 3000000              # nav → pretrained.pfbt
+npm run pretrain -- --level gallery --task fetch --steps 8000000 # fetch → pretrained-fetch.pfbt
+npx tsx scripts/eval.ts --level warehouse --episodes 200         # generalization eval (unseen)
+npx tsx scripts/eval.ts --level warehouse --task fetch           # fetch eval on unseen world
+npm run bake -- --level gallery                                  # navgrid stats / manifest bounds
+./scripts/fetch-world.sh <req_id> <level-id>                     # download Spaitial artifacts
 ```
 
 ## Credits
