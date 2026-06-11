@@ -188,6 +188,22 @@ function handler() {
         return;
       }
 
+      // re-attach a job after a dev-server restart (jobs are in-memory). The
+      // client still has the key; the world keeps generating on Spaitial's side.
+      const resume = url.match(/^\/ext\/created\/(req_[0-9a-f]{32})\/resume$/);
+      if (resume && req.method === 'POST') {
+        const reqId = resume[1];
+        if (!REQ_RE.test(reqId)) { res.statusCode = 400; res.end('bad id'); return; }
+        const existing = createdStatus(reqId);
+        if (existing) { json(res, 200, existing); return; }
+        const key = (req.headers['x-spaitial-key'] as string | undefined)?.trim();
+        if (!key || !key.startsWith('spt_')) { json(res, 409, { error: 'need key to resume' }); return; }
+        jobs.set(reqId, { phase: 'generating' });
+        void runCreateJob(reqId, key);
+        json(res, 202, { phase: 'generating' });
+        return;
+      }
+
       const created = url.match(/^\/ext\/created\/(req_[0-9a-f]{32})\/(status|world\.ply|mesh_simplified\.ply)$/);
       if (created) {
         const [, reqId, what] = created;

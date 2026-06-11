@@ -26,6 +26,17 @@ export interface UiCallbacks {
 
 const BALL_COLORS = ['#ef5350', '#42a5f5', '#66bb6a', '#ffee58', '#ab47bc'];
 
+const PENDING_KEY = 'spaitial-pending-gen';
+const PHASE_LABEL: Record<string, string> = {
+  generating: 'Generating world (5–10 min)',
+  downloading: 'Downloading splat',
+  'mesh-export': 'Exporting collision mesh',
+  converting: 'Converting for PlayCanvas',
+};
+
+interface PendingGen { reqId: string; title: string; startedAt: number }
+interface GenEntry extends PendingGen { phase: string; detail?: string; error?: string; ready?: boolean }
+
 export class Ui {
   private el: HTMLElement;
   private trainBtn!: HTMLButtonElement;
@@ -38,6 +49,11 @@ export class Ui {
   private worldSelect!: HTMLSelectElement;
   private ballSelect!: HTMLSelectElement;
   private taskButtons: Record<string, HTMLButtonElement> = {};
+  private genChip!: HTMLElement;
+  private genState = new Map<string, GenEntry>();
+  private genPoll: ReturnType<typeof setInterval> | null = null;
+  private dialogReqId: string | null = null;        // job the open dialog is watching
+  private dialogProgressEl: HTMLElement | null = null;
   taskMode: TaskMode = 'nav';
   training = false;
 
@@ -80,9 +96,13 @@ export class Ui {
     createBtn.classList.add('primary');
     customRow.appendChild(createBtn);
     world.appendChild(customRow);
+    this.genChip = h(`<div class="gen-chip" style="display:none" title="Click to open the generation dialog"></div>`);
+    this.genChip.onclick = () => this.openCreateDialog();
+    world.appendChild(this.genChip);
     world.appendChild(h(`<div class="hint">Generate a new world from text or an image with your <b>Spaitial API key</b>. Swap worlds anytime — the policy only sees egocentric lidar, so what it learned transfers.</div>`));
     this.el.appendChild(world);
     this.restoreCreatedWorlds();
+    this.resumePending();
 
     // --- Task ---
     const taskGroup = group('Task');
@@ -230,15 +250,16 @@ export class Ui {
     this.worldSelect.value = id;
   }
 
-  // register a custom world in the dropdown (or just select it if present)
-  addCustomWorld(id: string, label: string): void {
+  // register a custom world in the dropdown; select=false adds it without
+  // changing the user's current world (used when a background job finishes)
+  addCustomWorld(id: string, label: string, select = true): void {
     if (![...this.worldSelect.options].some((o) => o.value === id)) {
       const opt = document.createElement('option');
       opt.value = id;
       opt.textContent = label;
       this.worldSelect.appendChild(opt);
     }
-    this.worldSelect.value = id;
+    if (select) this.worldSelect.value = id;
   }
 
   updateStats(s: TrainStats, totalSteps: number): void {
@@ -332,38 +353,41 @@ export class Ui {
     const goBtn = card.querySelector('#byok-go') as HTMLButtonElement;
     const progress = card.querySelector('#byok-progress') as HTMLElement;
     keyInput.value = localStorage.getItem('spaitial-api-key') ?? '';
+    this.dialogProgressEl = progress;
 
-    let polling: ReturnType<typeof setInterval> | null = null;
     const close = () => {
-      if (polling) clearInterval(polling);
+      this.dialogReqId = null;
+      this.dialogProgressEl = null;
       overlay.classList.remove('open');
     };
     (card.querySelector('#byok-close') as HTMLButtonElement).onclick = close;
     overlay.onclick = (e) => { if (e.target === overlay) close(); };
 
-    const showProgress = (msg: string, spin = true) => {
-      progress.classList.add('show');
-      progress.innerHTML = `${spin ? '<span class="spinner"></span>' : ''}${msg}`;
-    };
+    // if a generation is already running, reflect it immediately
+    const running = [...this.genState.values()].find((g) => !g.ready && !g.error);
+    if (running) { this.dialogReqId = running.reqId; this.renderDialogProgress(); }
 
     goBtn.onclick = async () => {
       const key = keyInput.value.trim();
-      if (!key.startsWith('spt_')) { showProgress('Enter a valid API key (spt_live_… / spt_test_…)', false); return; }
+      if (!key.startsWith('spt_')) { progress.classList.add('show'); progress.textContent = 'Enter a valid API key (spt_live_… / spt_test_…)'; return; }
       localStorage.setItem('spaitial-api-key', key);
 
       const body: { prompt?: string; imageBase64?: string } = {};
       if (imageInput.files?.[0]) {
-        showProgress('Reading image…');
+        progress.classList.add('show');
+        progress.innerHTML = '<span class="spinner"></span>Reading image…';
         body.imageBase64 = await fileToDataUri(imageInput.files[0]);
       } else if (promptInput.value.trim()) {
         body.prompt = promptInput.value.trim();
       } else {
-        showProgress('Describe the world or pick an image first', false);
+        progress.classList.add('show');
+        progress.textContent = 'Describe the world or pick an image first';
         return;
       }
 
       goBtn.disabled = true;
-      showProgress('Submitting to api.spaitial.ai…');
+      progress.classList.add('show');
+      progress.innerHTML = '<span class="spinner"></span>Submitting to api.spaitial.ai…';
       try {
         const res = await fetch('/ext/create-world', {
           method: 'POST',
@@ -373,39 +397,134 @@ export class Ui {
         const data = await res.json();
         if (!res.ok) throw new Error(data?.error?.message ?? data?.error ?? `HTTP ${res.status}`);
         const reqId = data.request_id as string;
-        const started = Date.now();
-        const PHASE_LABEL: Record<string, string> = {
-          generating: 'Generating world (5–10 min)',
-          downloading: 'Downloading splat',
-          'mesh-export': 'Exporting collision mesh',
-          converting: 'Converting for PlayCanvas',
-        };
-        polling = setInterval(async () => {
-          try {
-            const st = await (await fetch(`/ext/created/${reqId}/status`)).json();
-            const mins = ((Date.now() - started) / 60000).toFixed(1);
-            if (st.phase === 'ready') {
-              if (polling) clearInterval(polling);
-              const title = st.title || `World ${reqId.slice(4, 10)}`;
-              this.rememberCreatedWorld(reqId, title);
-              this.addCustomWorld(`created:${reqId}`, `✨ ${title}`);
-              showProgress(`✅ <b>${title}</b> is ready — loading…`, false);
-              setTimeout(() => { close(); this.cb.onWorldReady(`created:${reqId}`, title); }, 800);
-            } else if (st.phase === 'error') {
-              if (polling) clearInterval(polling);
-              goBtn.disabled = false;
-              showProgress(`❌ ${st.error ?? 'generation failed'}`, false);
-            } else {
-              showProgress(`${PHASE_LABEL[st.phase] ?? st.phase}${st.detail ? ` — ${st.detail}` : ''} · ${mins} min elapsed`);
-            }
-          } catch { /* transient poll error */ }
-        }, 5000);
-        showProgress(`${PHASE_LABEL.generating} — submitted`);
+        // hand off to the shared, dialog-independent poller
+        this.startGeneration(reqId, '');
+        this.dialogReqId = reqId;
+        goBtn.disabled = false;
+        this.renderDialogProgress();
       } catch (e) {
         goBtn.disabled = false;
-        showProgress(`❌ ${(e as Error).message}`, false);
+        progress.classList.add('show');
+        progress.textContent = `❌ ${(e as Error).message}`;
       }
     };
+  }
+
+  // ---------------- generation state (persists across dialog close + reload) ----------------
+
+  private loadPending(): PendingGen[] {
+    try { return JSON.parse(localStorage.getItem(PENDING_KEY) ?? '[]') as PendingGen[]; }
+    catch { return []; }
+  }
+  private savePending(): void {
+    const list = [...this.genState.values()]
+      .filter((g) => !g.ready && !g.error)
+      .map((g) => ({ reqId: g.reqId, title: g.title, startedAt: g.startedAt }));
+    localStorage.setItem(PENDING_KEY, JSON.stringify(list));
+  }
+
+  // begin (or adopt) tracking a generation job
+  startGeneration(reqId: string, title: string, startedAt = Date.now()): void {
+    if (!this.genState.has(reqId)) {
+      this.genState.set(reqId, { reqId, title, startedAt, phase: 'generating' });
+    }
+    this.savePending();
+    this.renderGenChip();
+    this.ensurePoller();
+  }
+
+  // on reload, re-adopt any jobs that were still running and (re)attach the
+  // server to them using the stored key, in case the dev server restarted
+  private resumePending(): void {
+    const pending = this.loadPending();
+    if (pending.length === 0) return;
+    const key = localStorage.getItem('spaitial-api-key') ?? '';
+    for (const p of pending) {
+      this.genState.set(p.reqId, { ...p, phase: 'generating' });
+      if (key) {
+        fetch(`/ext/created/${p.reqId}/resume`, { method: 'POST', headers: { 'x-spaitial-key': key } }).catch(() => {});
+      }
+    }
+    this.renderGenChip();
+    this.ensurePoller();
+    // delay so this lands after main.ts's generic boot toast rather than under it
+    setTimeout(() => this.toast(`Resuming ${pending.length} world generation${pending.length > 1 ? 's' : ''} in progress…`), 1200);
+  }
+
+  private ensurePoller(): void {
+    if (this.genPoll) return;
+    const tick = () => void this.pollGenerations();
+    this.genPoll = setInterval(tick, 5000);
+    tick();
+  }
+
+  private async pollGenerations(): Promise<void> {
+    const active = [...this.genState.values()].filter((g) => !g.ready && !g.error);
+    if (active.length === 0) {
+      if (this.genPoll) { clearInterval(this.genPoll); this.genPoll = null; }
+      return;
+    }
+    for (const g of active) {
+      try {
+        const res = await fetch(`/ext/created/${g.reqId}/status`);
+        if (res.status === 404) {
+          // server forgot the job (restart). It can't recover without the key.
+          const key = localStorage.getItem('spaitial-api-key') ?? '';
+          if (key) { await fetch(`/ext/created/${g.reqId}/resume`, { method: 'POST', headers: { 'x-spaitial-key': key } }).catch(() => {}); continue; }
+          g.error = 'generation lost (dev server restarted)';
+        } else {
+          const st = await res.json();
+          if (st.title && !g.title) g.title = st.title;
+          if (st.phase === 'ready') {
+            g.ready = true;
+            const title = g.title || `World ${g.reqId.slice(4, 10)}`;
+            this.rememberCreatedWorld(g.reqId, title);
+            this.addCustomWorld(`created:${g.reqId}`, `✨ ${title}`, false);
+            if (this.dialogReqId === g.reqId) {
+              this.cb.onWorldReady(`created:${g.reqId}`, title);
+              this.dialogReqId = null;
+              document.getElementById('dialog-overlay')?.classList.remove('open');
+            } else {
+              this.toast(`✨ "${title}" is ready — pick it in the World list`);
+            }
+          } else if (st.phase === 'error') {
+            g.error = st.error ?? 'generation failed';
+            this.toast(`❌ World generation failed: ${g.error}`);
+          } else {
+            g.phase = st.phase;
+            g.detail = st.detail;
+          }
+        }
+      } catch { /* transient poll error — try again next tick */ }
+    }
+    this.savePending();
+    this.renderGenChip();
+    this.renderDialogProgress();
+  }
+
+  private genLine(g: GenEntry): string {
+    const mins = ((Date.now() - g.startedAt) / 60000).toFixed(1);
+    const label = PHASE_LABEL[g.phase] ?? g.phase;
+    const name = g.title ? `"${g.title}"` : 'world';
+    return `${label}${g.detail ? ` — ${g.detail}` : ''} · ${name} · ${mins} min`;
+  }
+
+  private renderGenChip(): void {
+    const active = [...this.genState.values()].filter((g) => !g.ready && !g.error);
+    if (active.length === 0) { this.genChip.style.display = 'none'; return; }
+    this.genChip.style.display = 'block';
+    const head = active.length > 1 ? `${active.length} worlds generating` : this.genLine(active[0]);
+    this.genChip.innerHTML = `<span class="spinner"></span>${head}`;
+  }
+
+  private renderDialogProgress(): void {
+    if (!this.dialogProgressEl || !this.dialogReqId) return;
+    const g = this.genState.get(this.dialogReqId);
+    if (!g) return;
+    this.dialogProgressEl.classList.add('show');
+    if (g.ready) this.dialogProgressEl.innerHTML = `✅ <b>${g.title}</b> is ready — loading…`;
+    else if (g.error) this.dialogProgressEl.innerHTML = `❌ ${g.error}`;
+    else this.dialogProgressEl.innerHTML = `<span class="spinner"></span>${this.genLine(g)}<br><span style="color:var(--muted);font-size:11px">You can close this — progress keeps showing in the panel.</span>`;
   }
 
   toast(message: string): void {

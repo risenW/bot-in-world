@@ -80,6 +80,17 @@
         border-radius: 8px; padding: 6px 8px;
       }
       input.link-input::placeholder { color: var(--muted); }
+      .gen-chip {
+        margin: 6px 0 2px; padding: 8px 10px; border-radius: 8px; cursor: pointer;
+        font-size: 11px; line-height: 1.4; color: var(--text);
+        background: rgba(179,136,255,0.1); border: 1px solid rgba(179,136,255,0.35);
+      }
+      .gen-chip:hover { background: rgba(179,136,255,0.18); }
+      .gen-chip .spinner {
+        display: inline-block; width: 9px; height: 9px; border-radius: 50%;
+        border: 2px solid var(--accent2); border-top-color: transparent;
+        animation: spin 0.9s linear infinite; margin-right: 7px; vertical-align: -1px;
+      }
       #dialog-overlay {
         position: fixed; inset: 0; z-index: 70; display: none;
         align-items: center; justify-content: center;
