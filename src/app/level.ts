@@ -4,7 +4,7 @@
 import * as pc from 'playcanvas';
 import RAPIER from '@dimforge/rapier3d-compat';
 import { parsePly, ParsedMesh } from '../sim/ply';
-import { bakeNavGrid, NavGrid, cellCenter } from '../sim/navgrid';
+import { bakeNavGrid, bakeNavGridFromSplat, gridToMesh, NavGrid, cellCenter } from '../sim/navgrid';
 
 export interface LevelManifest {
   id: string;
@@ -25,6 +25,7 @@ export class Level {
   levelCollider!: RAPIER.Collider;
 
   splatEntity: pc.Entity | null = null;
+  private splatAsset: pc.Asset | null = null;
   debugMesh: pc.Entity | null = null;
   navDebug: pc.Entity | null = null;
   mode: ViewMode = 'both';
@@ -35,33 +36,63 @@ export class Level {
     this.world = world;
   }
 
+  // levelId is either a bundled level ("warehouse") or "custom:<world-uuid>"
+  // for a world loaded from a public app.spaitial.ai link.
   async load(levelId: string, onProgress: (step: string, frac: number) => void): Promise<void> {
     this.unload();
-    onProgress('Loading manifest…', 0.05);
-    const manifest = (await (await fetch(`/levels/${levelId}/manifest.json`)).json()) as LevelManifest;
-    this.manifest = manifest;
+    const customUuid = levelId.startsWith('custom:') ? levelId.slice(7) : null;
 
-    onProgress('Downloading collision mesh…', 0.15);
-    const meshBuf = await (await fetch(manifest.collision[0].url)).arrayBuffer();
-    onProgress('Parsing collision mesh…', 0.3);
-    this.mesh = parsePly(meshBuf);
+    if (customUuid) {
+      this.manifest = {
+        id: levelId,
+        name: `Spaitial ${customUuid.slice(0, 8)}`,
+        description: 'Loaded from a public Spaitial link',
+        splats: [{ url: `/ext/spaitial/${customUuid}/world.ply` }],
+        collision: [],
+      };
+      onProgress('Fetching + converting world — first load can take a couple of minutes…', 0.1);
+      await this.loadSplat(this.manifest.splats[0].url);
 
-    onProgress('Baking navigation grid…', 0.45);
-    await microtask();
-    this.grid = bakeNavGrid(this.mesh);
+      const points = this.splatPositions();
+      if (!points) throw new Error('could not read gaussian data from the loaded splat');
+      onProgress('Baking navigation grid from splat…', 0.6);
+      await microtask();
+      // no mesh export for public worlds: navgrid from the splat itself,
+      // plus a synthetic ground trimesh so raycasts and physics still work
+      this.grid = bakeNavGridFromSplat(points);
+      const gm = gridToMesh(this.grid);
+      this.mesh = {
+        positions: gm.positions,
+        indices: gm.indices,
+        aabb: { min: [this.grid.minX, this.grid.meshMinY, this.grid.minZ], max: [this.grid.minX + this.grid.w * this.grid.cell, this.grid.meshMinY + 10, this.grid.minZ + this.grid.h * this.grid.cell] },
+      };
+    } else {
+      onProgress('Loading manifest…', 0.05);
+      const manifest = (await (await fetch(`/levels/${levelId}/manifest.json`)).json()) as LevelManifest;
+      this.manifest = manifest;
+
+      onProgress('Loading gaussian splat…', 0.1);
+      await this.loadSplat(manifest.splats[0].url);
+
+      onProgress('Downloading collision mesh…', 0.45);
+      const meshBuf = await (await fetch(manifest.collision[0].url)).arrayBuffer();
+      onProgress('Parsing collision mesh…', 0.6);
+      this.mesh = parsePly(meshBuf);
+
+      onProgress('Baking navigation grid…', 0.7);
+      await microtask();
+      this.grid = bakeNavGrid(this.mesh, this.splatPositions() ?? undefined);
+    }
     if (this.grid.spawn.length < 50) {
       console.warn(`navgrid: only ${this.grid.spawn.length} walkable cells — world may be hard to navigate`);
     }
 
-    onProgress('Creating physics…', 0.55);
+    onProgress('Creating physics…', 0.85);
     const body = this.world.createRigidBody(RAPIER.RigidBodyDesc.fixed());
     this.levelCollider = this.world.createCollider(
       RAPIER.ColliderDesc.trimesh(this.mesh.positions, this.mesh.indices),
       body,
     );
-
-    onProgress('Loading gaussian splat…', 0.7);
-    await this.loadSplat(manifest.splats[0].url);
 
     onProgress('Building debug views…', 0.92);
     this.buildDebugMesh();
@@ -72,6 +103,11 @@ export class Level {
 
   unload(): void {
     this.splatEntity?.destroy(); this.splatEntity = null;
+    if (this.splatAsset) {
+      this.app.assets.remove(this.splatAsset);
+      this.splatAsset.unload();
+      this.splatAsset = null;
+    }
     this.debugMesh?.destroy(); this.debugMesh = null;
     this.navDebug?.destroy(); this.navDebug = null;
     if (this.levelCollider) {
@@ -82,13 +118,36 @@ export class Level {
     }
   }
 
+  // Pull gaussian center positions out of the loaded gsplat resource for the
+  // navgrid's spawn-density filter. Engine-internal but guarded; returns null
+  // if the engine layout changes (spawning then falls back to the full region).
+  private splatPositions(): Float32Array | null {
+    try {
+      const res = this.splatAsset?.resource as any;
+      const data = res?.gsplatData ?? res?.splatData ?? null;
+      if (!data?.getProp) return null;
+      const x = data.getProp('x') as Float32Array | undefined;
+      const y = data.getProp('y') as Float32Array | undefined;
+      const z = data.getProp('z') as Float32Array | undefined;
+      if (!x || !y || !z) return null;
+      const out = new Float32Array(x.length * 3);
+      for (let i = 0; i < x.length; i++) {
+        out[i * 3] = x[i]; out[i * 3 + 1] = y[i]; out[i * 3 + 2] = z[i];
+      }
+      return out;
+    } catch (e) {
+      console.warn('splatPositions failed', e);
+      return null;
+    }
+  }
+
   private loadSplat(url: string): Promise<void> {
     return new Promise((resolve, reject) => {
       const asset = new pc.Asset(`splat-${this.manifest.id}`, 'gsplat' as never, { url });
+      this.splatAsset = asset;
       asset.once('load', () => {
         const entity = new pc.Entity('world-splat');
         (entity as any).addComponent('gsplat', { asset, unified: false });
-        entity.setLocalEulerAngles(0, 0, 180);
         this.app.root.addChild(entity);
         this.splatEntity = entity;
         resolve();

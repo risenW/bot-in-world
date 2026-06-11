@@ -2,7 +2,7 @@
 // This is the generalization test: train on one world, eval on another.
 // Usage: npx tsx scripts/eval.ts --level gallery --ckpt public/checkpoints/pretrained.pfbt --episodes 200
 
-import { readFileSync } from 'node:fs';
+import { readFileSync, existsSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parsePly } from '../src/sim/ply';
@@ -24,7 +24,11 @@ const episodes = parseInt(arg('episodes', '200'), 10);
 const seed = parseInt(arg('seed', '7'), 10);
 
 const mesh = parsePly(readFileSync(resolve(root, `public/levels/${level}/mesh_simplified.ply`)).buffer as ArrayBuffer);
-const grid = bakeNavGrid(mesh);
+const splatPath = resolve(root, `public/levels/${level}/world.ply`);
+const splat = existsSync(splatPath)
+  ? parsePly(readFileSync(splatPath).buffer as ArrayBuffer, { transform: false }).positions
+  : undefined;
+const grid = bakeNavGrid(mesh, splat);
 const { policy, meta } = policyFromCheckpoint(readFileSync(ckptPath).buffer as ArrayBuffer);
 console.log(`[eval] checkpoint: trained ${(meta.trainedSteps / 1e6).toFixed(1)}M steps on "${meta.world}" — evaluating on "${level}"`);
 

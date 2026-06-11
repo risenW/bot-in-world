@@ -74,6 +74,12 @@
         border-radius: 8px; padding: 6px 8px;
       }
       select option { background: #11161d; }
+      input.link-input {
+        font: inherit; font-size: 12px; color: var(--text); flex: 1; min-width: 0;
+        background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.12);
+        border-radius: 8px; padding: 6px 8px;
+      }
+      input.link-input::placeholder { color: var(--muted); }
       #toast {
         position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%) translateY(80px);
         background: var(--panel-bg); border: 1px solid var(--panel-border); border-radius: 10px;

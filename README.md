@@ -8,8 +8,8 @@ Because the policy only ever sees **egocentric observations** (a 16-ray lidar, t
 
 | World | Success rate (greedy, 200 episodes) | Avg episode |
 | --- | --- | --- |
-| Obstacle Warehouse (training world) | 90.5 % | 99 steps |
-| Gallery (**never seen during training**) | **100 %** | 49 steps |
+| Obstacle Warehouse (training world) | 99.5 % | 47 steps |
+| Gallery (**never seen during training**) | **100 %** | 44 steps |
 
 ## Run it
 
@@ -27,6 +27,8 @@ In the app:
 - **💾 Save / 📂 Load** — checkpoints as `.pfbt` files (puffernet-style flat float32 weights + JSON header). Training also autosaves to localStorage every 15 s.
 - **Click anywhere on the floor** to send the bot there.
 - **World selector** — swap to the unseen gallery mid-session. Weights carry over; training pauses so you can evaluate first.
+- **Load ANY public Spaitial world** — paste a link like `https://app.spaitial.ai/worlds/<id>` into the World panel. The dev server fetches the world's splat, converts it, and the navgrid is baked **from the gaussians alone** (public worlds have no mesh export): floor = the lowest dense band of points per column, obstacles = points at body height. A synthetic ground trimesh keeps click-to-goal and physics working. First load takes a minute; it's cached in `tmp/custom-worlds/` afterwards.
+- **Set the goal yourself** — click anywhere on the floor, or hit **🎲 New goal** for a random one.
 - View toggles: splat / collision wireframe / navgrid (<kbd>B</kbd> <kbd>M</kbd> <kbd>P</kbd> <kbd>O</kbd> <kbd>N</kbd>), camera collision <kbd>C</kbd>, follow cam <kbd>F</kbd>, greedy policy <kbd>G</kbd>, respawn <kbd>R</kbd>, train toggle <kbd>Space</kbd>, physics balls <kbd>1</kbd>–<kbd>5</kbd>.
 
 ## Generate your own worlds
@@ -54,7 +56,10 @@ Add the level to the `<select>` in `src/app/ui.ts` and it's playable + trainable
 ```
 text prompt ──Spaitial API──▶ gaussian splat (.spz→.ply)   visuals (PlayCanvas, unified:false)
                           └─▶ simplified mesh (.ply) ──▶ Rapier trimesh (camera/balls/click-rays)
-                                                     └─▶ NavGrid bake: 0.15 m occupancy + height field
+                                                     └─▶ NavGrid bake: 0.15 m occupancy + height field.
+        The reconstructed mesh is a closed "balloon" that extends far beyond the visible world
+        (phantom floor planes outside the walls), so floor candidates only count when gaussian
+        splat points sit just above them — the splat tells the navgrid where the world is real.
                                                               │
                        ┌──────────────────────────────────────┘
                        ▼

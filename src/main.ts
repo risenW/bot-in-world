@@ -158,6 +158,8 @@ async function boot() {
       initWorker();
       if (latestWeights) workerSend({ type: 'loadWeights', weights: latestWeights.slice(), trainedSteps: latestTrainedSteps });
       ui.setViewMode(level.mode);
+      if (id.startsWith('custom:')) ui.addCustomWorld(id, level.manifest.name);
+      else ui.setWorld(id);
       ui.toast(wasTraining
         ? `Switched to ${level.manifest.name} — training paused, policy carried over`
         : `Switched to ${level.manifest.name}`);
@@ -204,6 +206,12 @@ async function boot() {
       applyCheckpoint(b64ToBuf(b64), 'Autosave');
     },
     onWorldChange: (id) => void switchWorld(id),
+    onLoadCustomWorld: (link) => {
+      const m = link.match(/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i);
+      if (!m) { ui.toast('Paste a Spaitial world link like https://app.spaitial.ai/worlds/<id>'); return; }
+      void switchWorld(`custom:${m[1].toLowerCase()}`);
+    },
+    onNewGoal: () => { showcase.newGoal(); ui.toast('New random goal set'); },
     onViewMode: (mode: ViewMode) => { level.setMode(mode); ui.setViewMode(mode); },
     onToggleNav: () => ui.setToggle('nav', level.toggleNav()),
     onToggleCameraCollision: () => { camera.collision = !camera.collision; ui.setToggle('cam', camera.collision); },

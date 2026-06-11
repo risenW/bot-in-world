@@ -64,6 +64,13 @@ export class Showcase {
     this.acts = makeActivations(policy, 1);
   }
 
+  newGoal(): void {
+    this.env.steps = 0;
+    this.env.sampleGoal();
+    this.env.prevDist = this.env.goalDist();
+    this.syncGoal();
+  }
+
   clickGoal(x: number, z: number): boolean {
     if (!isWalkable(this.grid, x, z)) return false;
     this.env.setGoal(x, z);

@@ -23,8 +23,14 @@ const CLEAR_LOW = 0.3;      // obstacle band above ground...
 const CLEAR_HIGH = 1.65;    // ...blocks the cell (bot is ~1.5m tall)
 const MAX_STEP = 0.22;      // max ground height delta between neighbor cells
 const FLOOR_NY = 0.55;      // |triangle normal Y| to count as floor
+const SUPPORT_BAND = 2.2;   // splat points within [-0.3, +2.2] of a floor candidate support it
+const MIN_SUPPORT = 30;     // supporting splat points (3x3 neighborhood) for a valid floor
 
-export function bakeNavGrid(mesh: ParsedMesh): NavGrid {
+// `splatPoints` (xyz triplets of the gaussian splat centers) drives the
+// spawn filter: the reconstructed mesh extends far beyond the actual world
+// (flat void planes outside the walls), but gaussians only exist where the
+// world is real. Without it, spawning falls back to the full walkable region.
+export function bakeNavGrid(mesh: ParsedMesh, splatPoints?: Float32Array): NavGrid {
   const { positions: P, indices: I, aabb } = mesh;
   const minX = aabb.min[0] - CELL, minZ = aabb.min[2] - CELL;
   const w = Math.max(4, Math.ceil((aabb.max[0] - minX + CELL) / CELL));
@@ -65,6 +71,50 @@ export function bakeNavGrid(mesh: ParsedMesh): NavGrid {
     if (Math.abs(ny / len) >= FLOOR_NY) triFloor[t] = 1;
   }
 
+  // --- bucket splat points per cell (when provided) ---
+  // The reconstructed mesh is a closed "balloon" that extends far beyond the
+  // visible world: phantom floor planes outside the walls, and surfaces below
+  // the real floor. Gaussians only exist where the world is real, so a floor
+  // candidate is only valid if splat points sit just above it.
+  let sCounts: Uint32Array | null = null;
+  let sYs: Float32Array | null = null;
+  if (splatPoints && splatPoints.length >= 3) {
+    sCounts = new Uint32Array(nCells + 1);
+    const cellOf = (i: number) => {
+      const cx = Math.floor((splatPoints[i] - minX) / CELL);
+      const cz = Math.floor((splatPoints[i + 2] - minZ) / CELL);
+      return cx < 0 || cz < 0 || cx >= w || cz >= h ? -1 : cz * w + cx;
+    };
+    for (let i = 0; i < splatPoints.length; i += 3) {
+      const ci = cellOf(i);
+      if (ci >= 0) sCounts[ci + 1]++;
+    }
+    for (let i = 1; i <= nCells; i++) sCounts[i] += sCounts[i - 1];
+    sYs = new Float32Array(sCounts[nCells]);
+    const sCursor = sCounts.slice(0, nCells);
+    for (let i = 0; i < splatPoints.length; i += 3) {
+      const ci = cellOf(i);
+      if (ci >= 0) sYs[sCursor[ci]++] = splatPoints[i + 1];
+    }
+  }
+  // supporting splat points in the 3x3 neighborhood within [y+lo, y+hi]
+  const support = (cx: number, cz: number, y: number): number => {
+    if (!sCounts || !sYs) return MIN_SUPPORT; // no splat data -> everything passes
+    let n = 0;
+    for (let dz = -1; dz <= 1; dz++) {
+      for (let dx = -1; dx <= 1; dx++) {
+        const x = cx + dx, z = cz + dz;
+        if (x < 0 || z < 0 || x >= w || z >= h) continue;
+        const ci = z * w + x;
+        for (let k = sCounts[ci]; k < sCounts[ci + 1]; k++) {
+          const dy = sYs[k] - y;
+          if (dy > -0.3 && dy < SUPPORT_BAND) n++;
+        }
+      }
+    }
+    return n;
+  };
+
   // --- sample each cell center: vertical line vs triangles ---
   const ground = new Float32Array(nCells).fill(NaN);
   const blocked = new Uint8Array(nCells);
@@ -83,10 +133,12 @@ export function bakeNavGrid(mesh: ParsedMesh): NavGrid {
         if (!Number.isNaN(y)) { hitsY.push(y); hitsFloor.push(triFloor[t]); }
       }
       if (hitsY.length === 0) continue;
-      // ground = lowest floor-ish hit
+      // ground = lowest floor-ish hit with splat support
       let g = NaN;
       for (let i = 0; i < hitsY.length; i++) {
-        if (hitsFloor[i] && (Number.isNaN(g) || hitsY[i] < g)) g = hitsY[i];
+        if (!hitsFloor[i]) continue;
+        if (!Number.isNaN(g) && hitsY[i] >= g) continue;
+        if (support(cx, cz, hitsY[i]) >= MIN_SUPPORT) g = hitsY[i];
       }
       if (Number.isNaN(g)) { blocked[ci] = 1; continue; }
       ground[ci] = g;
@@ -96,6 +148,97 @@ export function bakeNavGrid(mesh: ParsedMesh): NavGrid {
       }
     }
   }
+
+  return finalizeGrid(ground, blocked, w, h, minX, minZ, aabb.min[1]);
+}
+
+// Bake a navgrid from gaussian splat points alone — for worlds loaded from a
+// public Spaitial link, where no reconstructed mesh export is available.
+// Floor = lowest dense band of points per column; obstacle = points at body
+// height above that floor.
+const SPLAT_FLOOR_PTS = 20;   // 3x3-neighborhood points in a 0.3m band to call it floor
+const SPLAT_BLOCK_PTS = 5;    // own-cell points at body height to call it blocked
+export function bakeNavGridFromSplat(points: Float32Array): NavGrid {
+  let minX = Infinity, minZ = Infinity, maxX = -Infinity, maxZ = -Infinity, minY = Infinity;
+  for (let i = 0; i < points.length; i += 3) {
+    if (points[i] < minX) minX = points[i];
+    if (points[i] > maxX) maxX = points[i];
+    if (points[i + 2] < minZ) minZ = points[i + 2];
+    if (points[i + 2] > maxZ) maxZ = points[i + 2];
+    if (points[i + 1] < minY) minY = points[i + 1];
+  }
+  minX -= CELL; minZ -= CELL;
+  const w = Math.max(4, Math.ceil((maxX - minX + CELL) / CELL));
+  const h = Math.max(4, Math.ceil((maxZ - minZ + CELL) / CELL));
+  const nCells = w * h;
+
+  // bucket point Ys per cell
+  const counts = new Uint32Array(nCells + 1);
+  const cellOf = (i: number) => {
+    const cx = Math.floor((points[i] - minX) / CELL);
+    const cz = Math.floor((points[i + 2] - minZ) / CELL);
+    return cx < 0 || cz < 0 || cx >= w || cz >= h ? -1 : cz * w + cx;
+  };
+  for (let i = 0; i < points.length; i += 3) {
+    const ci = cellOf(i);
+    if (ci >= 0) counts[ci + 1]++;
+  }
+  for (let i = 1; i <= nCells; i++) counts[i] += counts[i - 1];
+  const ys = new Float32Array(counts[nCells]);
+  const cursor = counts.slice(0, nCells);
+  for (let i = 0; i < points.length; i += 3) {
+    const ci = cellOf(i);
+    if (ci >= 0) ys[cursor[ci]++] = points[i + 1];
+  }
+
+  const ground = new Float32Array(nCells).fill(NaN);
+  const blocked = new Uint8Array(nCells);
+  const neighborYs: number[] = [];
+  for (let cz = 0; cz < h; cz++) {
+    for (let cx = 0; cx < w; cx++) {
+      const ci = cz * w + cx;
+      // gather 3x3 neighborhood Ys
+      neighborYs.length = 0;
+      for (let dz = -1; dz <= 1; dz++) {
+        for (let dx = -1; dx <= 1; dx++) {
+          const x = cx + dx, z = cz + dz;
+          if (x < 0 || z < 0 || x >= w || z >= h) continue;
+          const ni = z * w + x;
+          for (let k = counts[ni]; k < counts[ni + 1]; k++) neighborYs.push(ys[k]);
+        }
+      }
+      if (neighborYs.length < SPLAT_FLOOR_PTS) continue;
+      neighborYs.sort((a, b) => a - b);
+      // floor = lowest y such that >= SPLAT_FLOOR_PTS points lie within +0.3m
+      let floor = NaN;
+      for (let i = 0; i + SPLAT_FLOOR_PTS - 1 < neighborYs.length; i++) {
+        if (neighborYs[i + SPLAT_FLOOR_PTS - 1] - neighborYs[i] <= 0.3) {
+          floor = neighborYs[i];
+          break;
+        }
+      }
+      if (Number.isNaN(floor)) continue;
+      ground[ci] = floor;
+      // own-cell content at body height blocks
+      let nBlock = 0;
+      for (let k = counts[ci]; k < counts[ci + 1]; k++) {
+        const dy = ys[k] - floor;
+        if (dy > CLEAR_LOW && dy < CLEAR_HIGH) nBlock++;
+      }
+      if (nBlock >= SPLAT_BLOCK_PTS) blocked[ci] = 1;
+    }
+  }
+
+  return finalizeGrid(ground, blocked, w, h, minX, minZ, minY);
+}
+
+// Shared post-processing: walkability + step constraint + erosion + largest
+// connected component -> final grid.
+function finalizeGrid(
+  ground: Float32Array, blocked: Uint8Array,
+  w: number, h: number, minX: number, minZ: number, meshMinY: number,
+): NavGrid {
+  const nCells = w * h;
 
   // --- walkability: ground + not blocked + step constraint ---
   const walk = new Uint8Array(nCells);
@@ -153,17 +296,43 @@ export function bakeNavGrid(mesh: ParsedMesh): NavGrid {
     if (size > bestSize) { bestSize = size; bestComp = nComp; }
     nComp++;
   }
-  const spawn: number[] = [];
+  const spawnCells: number[] = [];
   const final = new Uint8Array(nCells);
   for (let ci = 0; ci < nCells; ci++) {
-    if (eroded[ci] && comp[ci] === bestComp) { final[ci] = 1; spawn.push(ci); }
+    if (eroded[ci] && comp[ci] === bestComp) { final[ci] = 1; spawnCells.push(ci); }
   }
 
   return {
     cell: CELL, minX, minZ, w, h,
-    walkable: final, ground, spawn: new Uint32Array(spawn),
-    meshMinY: aabb.min[1],
+    walkable: final, ground, spawn: new Uint32Array(spawnCells),
+    meshMinY,
   };
+}
+
+// Synthesize a ground trimesh from the grid (for worlds without a mesh export)
+// so Rapier raycasts (click-to-goal, camera clamp) and physics balls work.
+export function gridToMesh(g: NavGrid): { positions: Float32Array; indices: Uint32Array } {
+  const { w, h, ground } = g;
+  const vertIdx = new Int32Array(w * h).fill(-1);
+  const verts: number[] = [];
+  for (let cz = 0; cz < h; cz++) {
+    for (let cx = 0; cx < w; cx++) {
+      const ci = cz * w + cx;
+      if (Number.isNaN(ground[ci])) continue;
+      vertIdx[ci] = verts.length / 3;
+      verts.push(g.minX + (cx + 0.5) * g.cell, ground[ci], g.minZ + (cz + 0.5) * g.cell);
+    }
+  }
+  const idx: number[] = [];
+  for (let cz = 0; cz < h - 1; cz++) {
+    for (let cx = 0; cx < w - 1; cx++) {
+      const a = vertIdx[cz * w + cx], b = vertIdx[cz * w + cx + 1];
+      const c = vertIdx[(cz + 1) * w + cx], d = vertIdx[(cz + 1) * w + cx + 1];
+      if (a < 0 || b < 0 || c < 0 || d < 0) continue;
+      idx.push(a, b, c, b, d, c);
+    }
+  }
+  return { positions: new Float32Array(verts), indices: new Uint32Array(idx) };
 }
 
 function intersectVertical(px: number, pz: number, P: Float32Array, ia: number, ib: number, ic: number): number {

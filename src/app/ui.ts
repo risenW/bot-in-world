@@ -10,6 +10,8 @@ export interface UiCallbacks {
   onLoadPretrained: () => void;
   onLoadAutosave: () => void;
   onWorldChange: (id: string) => void;
+  onLoadCustomWorld: (link: string) => void;
+  onNewGoal: () => void;
   onViewMode: (mode: ViewMode) => void;
   onToggleNav: () => void;
   onToggleCameraCollision: () => void;
@@ -56,7 +58,17 @@ export class Ui {
     this.worldSelect.onchange = () => this.cb.onWorldChange(this.worldSelect.value);
     row.appendChild(this.worldSelect);
     world.appendChild(row);
-    world.appendChild(h(`<div class="hint">Swap worlds anytime — the policy only sees egocentric lidar, so what it learned transfers.</div>`));
+    const customRow = div('row');
+    const linkInput = document.createElement('input');
+    linkInput.type = 'text';
+    linkInput.placeholder = 'https://app.spaitial.ai/worlds/…';
+    linkInput.className = 'link-input';
+    const loadBtn = btn('🌍 Load', () => this.cb.onLoadCustomWorld(linkInput.value.trim()));
+    linkInput.onkeydown = (e) => { if (e.key === 'Enter') this.cb.onLoadCustomWorld(linkInput.value.trim()); };
+    customRow.appendChild(linkInput);
+    customRow.appendChild(loadBtn);
+    world.appendChild(customRow);
+    world.appendChild(h(`<div class="hint">Paste any <b>public</b> Spaitial world link. Swap worlds anytime — the policy only sees egocentric lidar, so what it learned transfers.</div>`));
     this.el.appendChild(world);
 
     // --- Training ---
@@ -115,8 +127,9 @@ export class Ui {
     brow.appendChild(this.toggles.follow);
     brow.appendChild(this.toggles.greedy);
     brow.appendChild(btn('♻ Respawn <kbd>R</kbd>', () => this.cb.onRespawn()));
+    brow.appendChild(btn('🎲 New goal', () => this.cb.onNewGoal()));
     bot.appendChild(brow);
-    bot.appendChild(h(`<div class="hint"><b>Click anywhere on the floor</b> to send the bot there. Drag to orbit, wheel to zoom.</div>`));
+    bot.appendChild(h(`<div class="hint"><b>Click anywhere on the floor</b> to set the goal yourself — the bot walks there. Drag to orbit, wheel to zoom.</div>`));
     this.el.appendChild(bot);
 
     // --- View ---
@@ -167,6 +180,17 @@ export class Ui {
   }
 
   setWorld(id: string): void {
+    this.worldSelect.value = id;
+  }
+
+  // register a custom world in the dropdown (or just select it if present)
+  addCustomWorld(id: string, label: string): void {
+    if (![...this.worldSelect.options].some((o) => o.value === id)) {
+      const opt = document.createElement('option');
+      opt.value = id;
+      opt.textContent = label;
+      this.worldSelect.appendChild(opt);
+    }
     this.worldSelect.value = id;
   }
 

@@ -3,7 +3,7 @@
 //
 // Usage: npm run pretrain [-- --level warehouse --steps 3000000 --seed 42]
 
-import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parsePly } from '../src/sim/ply';
@@ -28,8 +28,14 @@ const meshPath = resolve(root, `public/levels/${level}/mesh_simplified.ply`);
 const mesh = parsePly(readFileSync(meshPath).buffer as ArrayBuffer);
 console.log(`[pretrain] mesh: ${mesh.positions.length / 3} verts, ${mesh.indices.length / 3} tris`);
 
+const splatPath = resolve(root, `public/levels/${level}/world.ply`);
+const splat = existsSync(splatPath)
+  ? parsePly(readFileSync(splatPath).buffer as ArrayBuffer, { transform: false }).positions
+  : undefined;
+if (!splat) console.warn('[pretrain] no world.ply — spawn filter disabled');
+
 const t0 = Date.now();
-const grid = bakeNavGrid(mesh);
+const grid = bakeNavGrid(mesh, splat);
 console.log(`[pretrain] navgrid: ${grid.w}x${grid.h} cells, ${grid.spawn.length} walkable (${((Date.now() - t0) / 1000).toFixed(1)}s)`);
 if (grid.spawn.length < 200) {
   console.error('[pretrain] walkable area too small — check the level');

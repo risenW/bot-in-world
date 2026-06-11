@@ -1,5 +1,11 @@
 // Minimal PLY mesh parser (binary little-endian + ASCII), vertex xyz + triangulated faces.
-// Returns positions in Spaitial->PlayCanvas world space: (x,y,z) -> (-x,-y,z), winding flipped.
+//
+// Frames: the Spaitial API's reconstructed mesh needs the (x,y,z)->(x,-y,-z)
+// rotation (180° about X) into PlayCanvas display space (`transform: true`,
+// the default) — verified by voxel-overlap against the splat (74-79% vs <38%
+// for other candidate transforms). Splat .ply files converted with
+// @playcanvas/splat-transform are already in display space — read those with
+// `transform: false`.
 
 export interface ParsedMesh {
   positions: Float32Array; // transformed, xyz triplets
@@ -33,7 +39,8 @@ function readScalar(view: DataView, offset: number, type: PlyType): number {
   }
 }
 
-export function parsePly(buffer: ArrayBuffer): ParsedMesh {
+export function parsePly(buffer: ArrayBuffer, opts: { transform?: boolean } = {}): ParsedMesh {
+  const transform = opts.transform !== false;
   const bytes = new Uint8Array(buffer);
   // Find end_header
   const headerEnd = findHeaderEnd(bytes);
@@ -130,22 +137,25 @@ export function parsePly(buffer: ArrayBuffer): ParsedMesh {
 
   if (!positionsRaw) throw new Error('PLY has no vertex element');
 
-  // Spaitial/SuperSplat -> PlayCanvas: mirror (x,y,z) -> (-x,-y,z)
-  const positions = new Float32Array(positionsRaw.length);
+  const positions = positionsRaw;
+  if (transform) {
+    for (let i = 0; i < positions.length; i += 3) {
+      positions[i + 1] = -positions[i + 1];
+      positions[i + 2] = -positions[i + 2];
+    }
+  }
   const min: [number, number, number] = [Infinity, Infinity, Infinity];
   const max: [number, number, number] = [-Infinity, -Infinity, -Infinity];
-  for (let i = 0; i < positionsRaw.length; i += 3) {
-    const x = -positionsRaw[i], y = -positionsRaw[i + 1], z = positionsRaw[i + 2];
-    positions[i] = x; positions[i + 1] = y; positions[i + 2] = z;
+  for (let i = 0; i < positions.length; i += 3) {
+    const x = positions[i], y = positions[i + 1], z = positions[i + 2];
     if (x < min[0]) min[0] = x; if (y < min[1]) min[1] = y; if (z < min[2]) min[2] = z;
     if (x > max[0]) max[0] = x; if (y > max[1]) max[1] = y; if (z > max[2]) max[2] = z;
   }
   return { positions, indices: new Uint32Array(faceIndices), aabb: { min, max } };
 }
 
-// Fan triangulation with winding flip (mirror transform reverses orientation).
 function pushFan(out: number[], face: number[]) {
-  for (let i = 1; i < face.length - 1; i++) out.push(face[0], face[i + 1], face[i]);
+  for (let i = 1; i < face.length - 1; i++) out.push(face[0], face[i], face[i + 1]);
 }
 
 function findHeaderEnd(bytes: Uint8Array): number {

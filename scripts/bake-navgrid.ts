@@ -1,7 +1,7 @@
 // Inspect a level's navgrid + write real mesh bounds into its manifest.
 // Usage: npm run bake [-- --level warehouse]
 
-import { readFileSync, writeFileSync } from 'node:fs';
+import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parsePly } from '../src/sim/ply';
@@ -13,7 +13,12 @@ const level = i >= 0 ? process.argv[i + 1] : 'warehouse';
 
 const dir = resolve(root, `public/levels/${level}`);
 const mesh = parsePly(readFileSync(resolve(dir, 'mesh_simplified.ply')).buffer as ArrayBuffer);
-const grid = bakeNavGrid(mesh);
+const splatPath = resolve(dir, 'world.ply');
+const splat = existsSync(splatPath)
+  ? parsePly(readFileSync(splatPath).buffer as ArrayBuffer, { transform: false }).positions
+  : undefined;
+if (!splat) console.warn('no world.ply — spawn filter disabled');
+const grid = bakeNavGrid(mesh, splat);
 
 const walkablePct = (100 * grid.spawn.length) / (grid.w * grid.h);
 console.log(`level=${level}`);
