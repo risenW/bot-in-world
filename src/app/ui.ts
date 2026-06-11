@@ -347,7 +347,7 @@ export class Ui {
           <input type="text" id="byok-import" class="link-input" placeholder="request ID — req_…" />
           <button id="byok-import-go">📥 Import</button>
         </div>
-        <div class="hint">Skip generation — pull an existing world's splat + mesh straight from the API by its <b>request ID</b> (the <code>req_…</code> returned when it was created).</div>
+        <div class="hint">Skip generation — pull an existing world's splat + mesh straight from the API by its <b>request ID</b>. Find your <code>req_…</code> IDs at <a href="https://developers.spaitial.ai/generations" target="_blank" style="color:var(--accent)">developers.spaitial.ai/generations</a>.</div>
         <div class="progress" id="byok-progress"></div>
         <div class="hint" style="margin-top:10px">Your key goes only to your local dev server, is held in memory for this job, and is never stored on disk. It is remembered in this browser (localStorage) for convenience.</div>
       </div>`);
