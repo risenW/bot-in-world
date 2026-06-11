@@ -1,0 +1,25 @@
+{
+  "name": "puffer-bot-in-world",
+  "version": "0.1.0",
+  "description": "A humanoid bot learns to navigate AI-generated 3D worlds — in your browser. PlayCanvas + Rapier + a TypeScript port of PufferLib's PPO.",
+  "type": "module",
+  "license": "MIT",
+  "scripts": {
+    "dev": "vite --host 0.0.0.0",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview --host 0.0.0.0",
+    "bake": "tsx scripts/bake-navgrid.ts",
+    "pretrain": "tsx scripts/pretrain.ts"
+  },
+  "dependencies": {
+    "@dimforge/rapier3d-compat": "latest",
+    "playcanvas": "latest"
+  },
+  "devDependencies": {
+    "@playcanvas/splat-transform": "^2.5.2",
+    "@types/node": "^24.0.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.8.0",
+    "vite": "^6.4.2"
+  }
+}

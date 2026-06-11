@@ -1,0 +1,16 @@
+# secrets
+.env
+
+# deps / build
+node_modules/
+dist/
+.venv-spz/
+
+# large generated level assets — regenerate via scripts/fetch-world.sh + splat-transform,
+# or download from the release assets. Manifests stay in git.
+public/levels/**/*.ply
+public/levels/**/*.spz
+
+# scratch
+tmp/
+.claude/

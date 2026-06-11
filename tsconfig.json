@@ -1,0 +1,16 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "lib": ["ES2022", "DOM", "DOM.Iterable", "WebWorker"],
+    "strict": true,
+    "noUnusedLocals": false,
+    "skipLibCheck": true,
+    "isolatedModules": true,
+    "resolveJsonModule": true,
+    "useDefineForClassFields": true,
+    "types": ["vite/client", "node"]
+  },
+  "include": ["src", "scripts"]
+}

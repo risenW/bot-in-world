@@ -1,0 +1,58 @@
+{
+  "version": "1.0",
+  "id": "warehouse",
+  "name": "Obstacle Warehouse",
+  "description": "Industrial loft obstacle course — the training world.",
+  "transform": {
+    "origin": [
+      0,
+      0,
+      0
+    ],
+    "scale": 1,
+    "upAxis": "y"
+  },
+  "bounds": {
+    "min": [
+      -19.93491554260254,
+      -2.8879189491271973,
+      -9.417951583862305
+    ],
+    "max": [
+      12.403902053833008,
+      6.3008952140808105,
+      22.788373947143555
+    ]
+  },
+  "splats": [
+    {
+      "url": "/levels/warehouse/world.ply",
+      "format": "ply"
+    }
+  ],
+  "collision": [
+    {
+      "url": "/levels/warehouse/mesh_simplified.ply",
+      "format": "ply"
+    }
+  ],
+  "spawns": [
+    {
+      "id": "main",
+      "name": "Main Spawn",
+      "position": [
+        0,
+        0,
+        0
+      ],
+      "rotation": 0,
+      "isDefault": true
+    }
+  ],
+  "hotspots": [],
+  "spatial": {
+    "cellSize": 5,
+    "nearRadius": 15,
+    "farRadius": 30
+  }
+}

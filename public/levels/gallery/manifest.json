@@ -1,0 +1,58 @@
+{
+  "version": "1.0",
+  "id": "gallery",
+  "name": "Gallery (unseen world)",
+  "description": "Museum gallery — never seen during training. Swap here to test generalization.",
+  "transform": {
+    "origin": [
+      0,
+      0,
+      0
+    ],
+    "scale": 1,
+    "upAxis": "y"
+  },
+  "bounds": {
+    "min": [
+      -15.508018493652344,
+      -1.3369451761245728,
+      -13.455677032470703
+    ],
+    "max": [
+      16.05449676513672,
+      3.772675037384033,
+      21.201820373535156
+    ]
+  },
+  "splats": [
+    {
+      "url": "/levels/gallery/world.ply",
+      "format": "ply"
+    }
+  ],
+  "collision": [
+    {
+      "url": "/levels/gallery/mesh_simplified.ply",
+      "format": "ply"
+    }
+  ],
+  "spawns": [
+    {
+      "id": "main",
+      "name": "Main Spawn",
+      "position": [
+        0,
+        0,
+        0
+      ],
+      "rotation": 0,
+      "isDefault": true
+    }
+  ],
+  "hotspots": [],
+  "spatial": {
+    "cellSize": 5,
+    "nearRadius": 15,
+    "farRadius": 30
+  }
+}

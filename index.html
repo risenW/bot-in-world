@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>PufferBot — RL navigation in AI-generated worlds</title>
+    <style>
+      :root {
+        --panel-bg: rgba(13, 17, 23, 0.82);
+        --panel-border: rgba(255, 255, 255, 0.12);
+        --accent: #4fc3f7;
+        --accent2: #b388ff;
+        --good: #69f0ae;
+        --warn: #ffd54f;
+        --text: #e6edf3;
+        --muted: #9aa7b3;
+      }
+      * { box-sizing: border-box; }
+      html, body { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; background: #06080c; }
+      body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; color: var(--text); }
+      #app-canvas { width: 100%; height: 100%; display: block; touch-action: none; }
+
+      #loading {
+        position: fixed; inset: 0; display: flex; flex-direction: column; gap: 14px;
+        align-items: center; justify-content: center; background: #06080c; z-index: 50;
+        transition: opacity 0.4s ease;
+      }
+      #loading.hidden { opacity: 0; pointer-events: none; }
+      #loading .title { font-size: 22px; font-weight: 700; letter-spacing: 0.5px; }
+      #loading .title span { color: var(--accent); }
+      #loading .bar { width: 280px; height: 6px; border-radius: 3px; background: rgba(255,255,255,0.08); overflow: hidden; }
+      #loading .bar > div { height: 100%; width: 0%; border-radius: 3px; background: linear-gradient(90deg, var(--accent), var(--accent2)); transition: width 0.2s ease; }
+      #loading .step { font-size: 13px; color: var(--muted); }
+
+      #panel {
+        position: fixed; top: 12px; left: 12px; width: 300px; max-height: calc(100vh - 24px);
+        overflow-y: auto; z-index: 10; border-radius: 14px;
+        background: var(--panel-bg); border: 1px solid var(--panel-border);
+        backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
+        box-shadow: 0 8px 32px rgba(0,0,0,0.45);
+        padding: 14px; scrollbar-width: thin;
+      }
+      #panel h1 { font-size: 15px; margin: 0 0 2px; display: flex; align-items: center; gap: 8px; }
+      #panel h1 .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--good); box-shadow: 0 0 8px var(--good); }
+      #panel .subtitle { font-size: 11px; color: var(--muted); margin-bottom: 10px; }
+      .group { margin-top: 12px; padding-top: 10px; border-top: 1px solid rgba(255,255,255,0.07); }
+      .group-label { font-size: 10px; text-transform: uppercase; letter-spacing: 1.2px; color: var(--muted); margin-bottom: 8px; }
+      .row { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 6px; }
+      button {
+        font: inherit; font-size: 12px; color: var(--text); cursor: pointer;
+        background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.12);
+        border-radius: 8px; padding: 6px 10px; transition: all 0.15s ease;
+      }
+      button:hover { background: rgba(255,255,255,0.12); }
+      button.active { background: rgba(79,195,247,0.22); border-color: var(--accent); color: var(--accent); }
+      button.primary { background: linear-gradient(135deg, rgba(79,195,247,0.25), rgba(179,136,255,0.25)); border-color: var(--accent); font-weight: 600; flex: 1; }
+      button.primary:hover { background: linear-gradient(135deg, rgba(79,195,247,0.4), rgba(179,136,255,0.4)); }
+      button.danger { border-color: rgba(255,110,110,0.5); }
+      button:disabled { opacity: 0.4; cursor: not-allowed; }
+      kbd {
+        font-family: ui-monospace, monospace; font-size: 10px; color: var(--muted);
+        border: 1px solid rgba(255,255,255,0.15); border-bottom-width: 2px;
+        border-radius: 4px; padding: 0 4px; margin-left: 4px;
+      }
+      .hint { font-size: 11px; color: var(--muted); line-height: 1.5; }
+      .stat-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 10px; font-size: 11px; }
+      .stat-grid .k { color: var(--muted); }
+      .stat-grid .v { text-align: right; font-variant-numeric: tabular-nums; color: var(--text); }
+      #chart { width: 100%; height: 90px; border-radius: 8px; background: rgba(0,0,0,0.35); display: block; }
+      .file-input { display: none; }
+      select {
+        font: inherit; font-size: 12px; color: var(--text); flex: 1;
+        background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.12);
+        border-radius: 8px; padding: 6px 8px;
+      }
+      select option { background: #11161d; }
+      #toast {
+        position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%) translateY(80px);
+        background: var(--panel-bg); border: 1px solid var(--panel-border); border-radius: 10px;
+        padding: 10px 18px; font-size: 13px; z-index: 60; transition: transform 0.3s ease;
+        backdrop-filter: blur(14px);
+      }
+      #toast.show { transform: translateX(-50%) translateY(0); }
+      @media (max-width: 720px) {
+        #panel { width: calc(100vw - 24px); max-height: 45vh; }
+      }
+    </style>
+  </head>
+  <body>
+    <canvas id="app-canvas"></canvas>
+    <div id="loading">
+      <div class="title">Puffer<span>Bot</span></div>
+      <div class="bar"><div id="loading-fill"></div></div>
+      <div class="step" id="loading-step">Booting…</div>
+    </div>
+    <div id="panel"></div>
+    <div id="toast"></div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
