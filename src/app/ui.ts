@@ -330,7 +330,7 @@ export class Ui {
       <div class="dialog">
         <h2>✨ Create a world with the Spaitial API</h2>
         <div class="sub">Bring your own key from <a href="https://developers.spaitial.ai" target="_blank" style="color:var(--accent)">developers.spaitial.ai</a>.
-        Generation takes ~5–10 minutes and produces a gaussian splat <b>plus a collision mesh</b>, so the bot gets full physics, climbing, and training support.</div>
+        Generation produces a gaussian splat <b>plus a collision mesh</b> (full physics, climbing, training). Already made one? Reuse it below — no waiting.</div>
         <label>Spaitial API key</label>
         <input type="password" id="byok-key" placeholder="spt_live_…" autocomplete="off" />
         <label>Describe the world (text → world)</label>
@@ -341,6 +341,13 @@ export class Ui {
           <button class="primary" id="byok-go">🚀 Generate world</button>
           <button id="byok-close">Close</button>
         </div>
+        <div style="border-top:1px solid rgba(255,255,255,0.1); margin:16px 0 0; padding-top:12px"></div>
+        <label>Reuse a world already generated with this key</label>
+        <div class="row" style="margin-top:0">
+          <input type="text" id="byok-import" class="link-input" placeholder="req_… or app.spaitial.ai/worlds/<id>" />
+          <button id="byok-import-go">📥 Import</button>
+        </div>
+        <div class="hint">Skip generation — pull an existing world's splat + mesh straight from the API. A request ID is instant; a world ID is looked up among your recent requests.</div>
         <div class="progress" id="byok-progress"></div>
         <div class="hint" style="margin-top:10px">Your key goes only to your local dev server, is held in memory for this job, and is never stored on disk. It is remembered in this browser (localStorage) for convenience.</div>
       </div>`);
@@ -408,6 +415,40 @@ export class Ui {
         progress.textContent = `❌ ${(e as Error).message}`;
       }
     };
+
+    // import / reuse an existing world by request or world id
+    const importInput = card.querySelector('#byok-import') as HTMLInputElement;
+    const importBtn = card.querySelector('#byok-import-go') as HTMLButtonElement;
+    const doImport = async () => {
+      const key = keyInput.value.trim();
+      if (!key.startsWith('spt_')) { progress.classList.add('show'); progress.textContent = 'Enter your API key first'; return; }
+      localStorage.setItem('spaitial-api-key', key);
+      const id = importInput.value.trim();
+      if (!id) { progress.classList.add('show'); progress.textContent = 'Paste a request ID or world link first'; return; }
+      importBtn.disabled = true;
+      progress.classList.add('show');
+      progress.innerHTML = '<span class="spinner"></span>Looking up world via the API…';
+      try {
+        const res = await fetch('/ext/import-world', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'x-spaitial-key': key },
+          body: JSON.stringify({ id }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data?.error?.message ?? data?.error ?? `HTTP ${res.status}`);
+        const reqId = data.request_id as string;
+        this.startGeneration(reqId, '', Date.now(), 'downloading');
+        this.dialogReqId = reqId;
+        importBtn.disabled = false;
+        this.renderDialogProgress();
+      } catch (e) {
+        importBtn.disabled = false;
+        progress.classList.add('show');
+        progress.textContent = `❌ ${(e as Error).message}`;
+      }
+    };
+    importBtn.onclick = doImport;
+    importInput.onkeydown = (e) => { if (e.key === 'Enter') doImport(); };
   }
 
   // ---------------- generation state (persists across dialog close + reload) ----------------
@@ -423,10 +464,10 @@ export class Ui {
     localStorage.setItem(PENDING_KEY, JSON.stringify(list));
   }
 
-  // begin (or adopt) tracking a generation job
-  startGeneration(reqId: string, title: string, startedAt = Date.now()): void {
+  // begin (or adopt) tracking a generation/import job
+  startGeneration(reqId: string, title: string, startedAt = Date.now(), initialPhase = 'generating'): void {
     if (!this.genState.has(reqId)) {
-      this.genState.set(reqId, { reqId, title, startedAt, phase: 'generating' });
+      this.genState.set(reqId, { reqId, title, startedAt, phase: initialPhase });
     }
     this.savePending();
     this.renderGenChip();
