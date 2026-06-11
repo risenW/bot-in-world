@@ -2,7 +2,7 @@
 
 A humanoid bot teaches itself to navigate **3D worlds generated from a text prompt or a photo** with the [Spaitial API](https://developers.spaitial.ai) (gaussian splat + reconstructed collision mesh), trained with a TypeScript port of **[PufferLib](https://puffer.ai)'s PPO**. The reinforcement learning runs **100% client-side** in a web worker at thousands of steps per second — no training server, no GPU farm. Open the page, press *Start learning*, and watch it figure out the world in minutes.
 
-**▶ [Live demo](https://risenw.github.io/spaitial-bot/)** — two bundled worlds, train from scratch or load the pretrained policy, all in your browser. (Creating *new* worlds from the Spaitial API needs a quick local setup — see below.)
+**▶ [Live demo](https://risenw.github.io/bot-in-world/)** — two bundled worlds, train from scratch or load the pretrained policy, all in your browser. (Creating *new* worlds from the Spaitial API needs a quick local setup — see below.)
 
 > The small Vite dev server is only a thin proxy for **world generation** — it forwards Spaitial API calls and converts the generated `.spz` splat to a PlayCanvas-loadable splat. All RL training and inference is pure browser, which is why the hosted demo works as a static site.
 
