@@ -30,7 +30,7 @@ The repo ships ready to play: two pretrained checkpoints (`pretrained.pfbt` / `p
 
 ### Hosted demo vs. local
 
-Everything except world creation is pure static frontend, so the [live demo](https://risenw.github.io/spaitial-bot/) (auto-deployed to GitHub Pages) lets anyone train and watch the bot in the bundled worlds. **Creating or importing worlds via the Spaitial API needs the local dev server** — the API allowlists CORS to its own app and the `.spz`→splat conversion is a Node step, so it can't run on a static host. Clone + `npm run dev` and the "Create your own world" button lights up.
+Everything except world creation is pure static frontend, so the [live demo](https://risenw.github.io/spaitial-bot/) (auto-deployed to GitHub Pages) lets anyone train and watch the bot in the bundled worlds. **Creating or importing worlds via the Spaitial API needs the local dev server**  for the `.spz`→splat conversion, which is a Node step, so it can't run on a static host. Clone + `npm run dev` and the "Create your own world" button lights up.
 
 In the app:
 
